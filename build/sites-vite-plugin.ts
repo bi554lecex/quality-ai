@@ -26,11 +26,18 @@ export function sites(): Plugin {
     },
     async closeBundle() {
       const outputDirectory = resolve(root, "dist", ".openai");
+      const serverDirectory = resolve(root, "dist", "server");
       const hostingConfig = resolve(root, ".openai", "hosting.json");
       const drizzleSource = resolve(root, "drizzle");
+      const workerEntry = resolve(root, "worker", "index.js");
 
       await rm(outputDirectory, { recursive: true, force: true });
       await mkdir(outputDirectory, { recursive: true });
+      await mkdir(serverDirectory, { recursive: true });
+
+      if (await exists(workerEntry)) {
+        await cp(workerEntry, resolve(serverDirectory, "index.js"));
+      }
 
       if (await exists(hostingConfig)) {
         await cp(hostingConfig, resolve(outputDirectory, "hosting.json"));
