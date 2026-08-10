@@ -1,7 +1,7 @@
 import { mkdirSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import type { ExecutionResult, PrdAnalysis, ReviewState, SavedAnalysis } from '../shared/contracts'
+import type { AutomationPlan, ExecutionResult, PrdAnalysis, ReviewState, SavedAnalysis, SavedAutomationPlan } from '../shared/contracts'
 
 const databasePath = resolve('data/quality-ai.sqlite')
 mkdirSync(dirname(databasePath), { recursive: true })
@@ -32,6 +32,14 @@ database.exec(`
     result_json TEXT NOT NULL,
     created_at TEXT NOT NULL
   );
+  CREATE TABLE IF NOT EXISTS automation_plans (
+    id TEXT PRIMARY KEY,
+    analysis_id TEXT NOT NULL,
+    case_keys_json TEXT NOT NULL,
+    plan_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (analysis_id) REFERENCES analyses(id) ON DELETE CASCADE
+  );
 `)
 
 const analysisColumns = database.prepare('PRAGMA table_info(analyses)').all() as Array<{ name: string }>
@@ -55,15 +63,7 @@ export function saveAnalysis(input: {
   `).run(input.id, input.fileName, JSON.stringify(input.fileNames), input.sourceText, input.provider, input.model, JSON.stringify(input.result), input.createdAt)
 }
 
-export function getLatestAnalysis(): SavedAnalysis | null {
-  const row = database.prepare(`
-    SELECT a.id, a.file_name, a.file_names_json, a.provider, a.model, a.result_json, a.created_at,
-           r.confirmed_questions_json, r.selected_cases_json, r.updated_at
-    FROM analyses a
-    LEFT JOIN analysis_reviews r ON r.analysis_id = a.id
-    ORDER BY a.created_at DESC LIMIT 1
-  `).get() as Record<string, string> | undefined
-
+function mapAnalysisRow(row: Record<string, string> | undefined): SavedAnalysis | null {
   if (!row) return null
   return {
     id: row.id,
@@ -79,6 +79,23 @@ export function getLatestAnalysis(): SavedAnalysis | null {
       updatedAt: row.updated_at ?? null,
     },
   }
+}
+
+const analysisSelect = `
+  SELECT a.id, a.file_name, a.file_names_json, a.provider, a.model, a.result_json, a.created_at,
+         r.confirmed_questions_json, r.selected_cases_json, r.updated_at
+  FROM analyses a LEFT JOIN analysis_reviews r ON r.analysis_id = a.id
+`
+
+export function getLatestAnalysis(): SavedAnalysis | null {
+  const row = database.prepare(`${analysisSelect}
+    ORDER BY a.created_at DESC LIMIT 1
+  `).get() as Record<string, string> | undefined
+  return mapAnalysisRow(row)
+}
+
+export function getAnalysisById(id: string): SavedAnalysis | null {
+  return mapAnalysisRow(database.prepare(`${analysisSelect} WHERE a.id = ?`).get(id) as Record<string, string> | undefined)
 }
 
 export function saveReview(analysisId: string, review: Omit<ReviewState, 'updatedAt'>): ReviewState {
@@ -104,4 +121,15 @@ export function saveExecution(result: ExecutionResult) {
 export function getLatestExecution(): ExecutionResult | null {
   const row = database.prepare('SELECT result_json FROM executions ORDER BY created_at DESC LIMIT 1').get() as { result_json: string } | undefined
   return row ? JSON.parse(row.result_json) as ExecutionResult : null
+}
+
+export function saveAutomationPlan(input: SavedAutomationPlan) {
+  database.prepare('INSERT INTO automation_plans (id, analysis_id, case_keys_json, plan_json, created_at) VALUES (?, ?, ?, ?, ?)')
+    .run(input.id, input.analysisId, JSON.stringify(input.caseKeys), JSON.stringify(input.plan), input.createdAt)
+}
+
+export function getLatestAutomationPlan(): SavedAutomationPlan | null {
+  const row = database.prepare('SELECT id, analysis_id, case_keys_json, plan_json, created_at FROM automation_plans ORDER BY created_at DESC LIMIT 1').get() as Record<string, string> | undefined
+  if (!row) return null
+  return { id: row.id, analysisId: row.analysis_id, caseKeys: JSON.parse(row.case_keys_json) as string[], plan: JSON.parse(row.plan_json) as AutomationPlan, createdAt: row.created_at }
 }

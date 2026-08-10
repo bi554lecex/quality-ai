@@ -32,3 +32,8 @@
   border: 1px dashed #dfe3e9;
   border-radius: 10px;
 }
+
+.target-config { display:flex; gap:8px; margin-top:14px; }
+.target-config input { flex:1; border:1px solid #dfe3ea; border-radius:8px; padding:9px 11px; font-size:10px; }
+.target-config button { border:0; border-radius:8px; background:#111827; color:#fff; padding:0 14px; font-size:9px; cursor:pointer; }
+.target-config button:disabled { opacity:.45; cursor:not-allowed; }

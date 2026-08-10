@@ -1,4 +1,4 @@
-import { prdAnalysisSchema, type PrdAnalysis } from '../shared/contracts'
+import { automationPlanSchema, prdAnalysisSchema, type AutomationPlan, type PrdAnalysis } from '../shared/contracts'
 import { jsonrepair } from 'jsonrepair'
 
 interface ModelConfig {
@@ -108,4 +108,30 @@ export async function analyzePrd(documents: SourceDocument[]): Promise<{ result:
   }
 
   throw lastError ?? new Error('模型解析失败')
+}
+
+export async function generateAutomationPlan(targetUrl: string, testCases: PrdAnalysis['requirements'][number]['testCases']): Promise<AutomationPlan> {
+  const config = getConfig()
+  const prompt = `你是 Playwright 自动化测试规划器。将测试用例转换为严格 JSON 的受控步骤，不输出 JavaScript。
+允许动作只有：
+- {"action":"goto","path":"/相对路径"}
+- {"action":"click","locator":{"by":"role|label|text|css","value":"值","name":"可选名称"}}
+- {"action":"fill","locator":{"by":"role|label|text|css","value":"值","name":"可选名称"},"value":"输入内容"}
+- {"action":"expectText","text":"预期可见文本"}
+- {"action":"screenshot","name":"证据名称"}
+优先使用 role、label、text，只有材料明确提供稳定选择器时才用 css。不得跳转到目标域名之外。无法从用例确定的登录、账号或数据准备不要杜撰，只从进入目标首页后的可执行步骤开始。最后必须截图。
+JSON 格式：{"name":"计划名称","targetUrl":"${targetUrl}","steps":[]}
+目标地址：${targetUrl}
+测试用例：${JSON.stringify(testCases)}`
+  const response = await fetch(`${config.baseUrl}/chat/completions`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${config.apiKey}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ model: config.model, messages: [{ role: 'user', content: prompt }], response_format: { type: 'json_object' }, thinking: { type: 'disabled' }, temperature: 0.1, max_tokens: 6000, stream: false }),
+    signal: AbortSignal.timeout(180_000),
+  })
+  const payload = await response.json() as CompletionResponse
+  if (!response.ok) throw new Error(payload.error?.message ?? `模型请求失败（HTTP ${response.status}）`)
+  const output = payload.choices?.[0]?.message?.content?.trim()
+  if (!output) throw new Error('模型未生成自动化计划')
+  return automationPlanSchema.parse(JSON.parse(jsonrepair(output.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, ''))))
 }

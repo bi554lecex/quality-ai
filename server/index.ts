@@ -1,8 +1,9 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import { randomUUID } from 'node:crypto'
 import { analyzePrd } from './model'
-import { getLatestAnalysis, getLatestExecution, saveAnalysis, saveExecution, saveReview } from './database'
+import { getAnalysisById, getLatestAnalysis, getLatestAutomationPlan, getLatestExecution, saveAnalysis, saveAutomationPlan, saveExecution, saveReview } from './database'
 import { runAutomationPlan } from './playwright-runner'
+import { generateAutomationPlan } from './model'
 
 const port = Number(process.env.API_PORT ?? 8787)
 const maxBodySize = 10 * 1024 * 1024
@@ -51,6 +52,29 @@ const server = createServer(async (request, response) => {
 
     if (request.method === 'GET' && request.url === '/api/executions/latest') {
       return json(response, 200, { execution: getLatestExecution() })
+    }
+
+    if (request.method === 'GET' && request.url === '/api/automation/plans/latest') {
+      return json(response, 200, { automationPlan: getLatestAutomationPlan() })
+    }
+
+    if (request.method === 'POST' && request.url === '/api/automation/generate') {
+      const body = await readJson(request)
+      const analysisId = typeof body.analysisId === 'string' ? body.analysisId : ''
+      const targetUrl = typeof body.targetUrl === 'string' ? body.targetUrl : ''
+      const caseKeys = Array.isArray(body.caseKeys) && body.caseKeys.every(key => typeof key === 'string') ? body.caseKeys : []
+      const analysis = getAnalysisById(analysisId)
+      if (!analysis) return json(response, 404, { error: '解析记录不存在' })
+      if (!targetUrl || !caseKeys.length) return json(response, 400, { error: '请选择用例并配置测试地址' })
+      const testCases = caseKeys.map(key => {
+        const match = key.match(/^(\d+)-TC-(\d+)$/)
+        return match ? analysis.result.requirements[Number(match[1])]?.testCases[Number(match[2])] : undefined
+      }).filter((item): item is NonNullable<typeof item> => Boolean(item))
+      if (!testCases.length) return json(response, 400, { error: '没有找到可生成的测试用例' })
+      const plan = await generateAutomationPlan(targetUrl, testCases)
+      const savedPlan = { id: randomUUID(), analysisId, caseKeys, plan, createdAt: new Date().toISOString() }
+      saveAutomationPlan(savedPlan)
+      return json(response, 201, { automationPlan: savedPlan })
     }
 
     if (request.method === 'POST' && request.url === '/api/automation/run') {

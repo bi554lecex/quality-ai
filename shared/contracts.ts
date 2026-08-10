@@ -82,6 +82,14 @@ export const automationPlanSchema = z.object({
 
 export type AutomationPlan = z.infer<typeof automationPlanSchema>
 
+export interface SavedAutomationPlan {
+  id: string
+  analysisId: string
+  caseKeys: string[]
+  createdAt: string
+  plan: AutomationPlan
+}
+
 export interface ExecutionResult {
   id: string
   name: string

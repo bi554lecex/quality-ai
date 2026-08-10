@@ -39,6 +39,7 @@ npm run start
 - 问题确认和用例选择的刷新恢复
 - 为 Playwright 执行层预留位置
 - Playwright 受控步骤 DSL、真实 Chromium 执行、截图与结果持久化
+- 选中业务用例后由 DeepSeek 生成受控 DSL，并可对指定测试环境立即执行
 
 未导入 PRD 时页面显示示例数据；成功导入后会明确显示“真实解析”，刷新页面会从 SQLite 恢复最近一次结果。
 
