@@ -2,7 +2,7 @@ import { mkdirSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { dirname, resolve } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import type { AutomationPlan, ExecutionResult, PrdAnalysis, ReviewState, SavedAnalysis, SavedAutomationPlan, TestEnvironment } from '../shared/contracts'
+import type { AnalysisSummary, AutomationPlan, ExecutionResult, PrdAnalysis, ReviewState, SavedAnalysis, SavedAutomationPlan, TestEnvironment } from '../shared/contracts'
 
 const databasePath = resolve('data/quality-ai.sqlite')
 mkdirSync(dirname(databasePath), { recursive: true })
@@ -105,6 +105,28 @@ export function getLatestAnalysis(): SavedAnalysis | null {
 
 export function getAnalysisById(id: string): SavedAnalysis | null {
   return mapAnalysisRow(database.prepare(`${analysisSelect} WHERE a.id = ?`).get(id) as Record<string, string> | undefined)
+}
+
+export function listAnalyses(limit = 30): AnalysisSummary[] {
+  const rows = database.prepare(`${analysisSelect} ORDER BY a.created_at DESC LIMIT ?`).all(limit) as Array<Record<string, string>>
+  return rows.flatMap(row => {
+    const analysis = mapAnalysisRow(row)
+    if (!analysis) return []
+    const requirements = analysis.result.requirements
+    return [{
+      id: analysis.id,
+      versionName: analysis.result.versionName,
+      productName: analysis.result.productName,
+      requirementCount: requirements.length,
+      questionCount: requirements.reduce((sum, item) => sum + item.questions.length, 0),
+      confirmedQuestionCount: analysis.review.confirmedQuestions.length,
+      testCaseCount: requirements.reduce((sum, item) => sum + item.testCases.length, 0),
+      selectedCaseCount: analysis.review.selectedCases.length,
+      provider: analysis.provider,
+      model: analysis.model,
+      createdAt: analysis.createdAt,
+    }]
+  })
 }
 
 export function saveReview(analysisId: string, review: Omit<ReviewState, 'updatedAt'>): ReviewState {

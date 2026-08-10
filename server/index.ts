@@ -4,7 +4,7 @@ import { createReadStream, existsSync } from 'node:fs'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { basename, resolve } from 'node:path'
 import { analyzePrd } from './model'
-import { getAnalysisById, getEnvironmentById, getLatestAnalysis, getLatestAutomationPlan, getLatestEnvironment, getLatestExecution, saveAnalysis, saveAutomationPlan, saveEnvironment, saveExecution, saveReview, setEnvironmentStorageState } from './database'
+import { getAnalysisById, getEnvironmentById, getLatestAnalysis, getLatestAutomationPlan, getLatestEnvironment, getLatestExecution, listAnalyses, saveAnalysis, saveAutomationPlan, saveEnvironment, saveExecution, saveReview, setEnvironmentStorageState } from './database'
 import { runAutomationPlan } from './playwright-runner'
 import { generateAutomationPlan } from './model'
 import { storageStateSchema } from '../shared/contracts'
@@ -52,6 +52,16 @@ const server = createServer(async (request, response) => {
 
     if (request.method === 'GET' && request.url === '/api/analyses/latest') {
       return json(response, 200, { analysis: getLatestAnalysis() })
+    }
+
+    if (request.method === 'GET' && request.url === '/api/analyses') {
+      return json(response, 200, { analyses: listAnalyses() })
+    }
+
+    const analysisMatch = request.url?.match(/^\/api\/analyses\/([a-f0-9-]+)$/i)
+    if (request.method === 'GET' && analysisMatch) {
+      const analysis = getAnalysisById(analysisMatch[1])
+      return analysis ? json(response, 200, { analysis }) : json(response, 404, { error: '版本不存在' })
     }
 
     if (request.method === 'GET' && request.url === '/api/executions/latest') {

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import type { ExecutionResult, PrdAnalysis, SavedAnalysis, SavedAutomationPlan, TestEnvironment } from '../shared/contracts'
+import type { AnalysisSummary, ExecutionResult, PrdAnalysis, SavedAnalysis, SavedAutomationPlan, TestEnvironment } from '../shared/contracts'
 
 type Tab = 'overview' | 'states' | 'questions' | 'cases'
 
@@ -70,6 +70,9 @@ const latestAutomationPlan = ref<SavedAutomationPlan | null>(null)
 const targetUrl = ref('')
 const environment = ref<TestEnvironment | null>(null)
 const environmentName = ref('测试环境')
+const analysisHistory = ref<AnalysisSummary[]>([])
+const versionMenuOpen = ref(false)
+const switchingVersion = ref(false)
 
 const analysis = computed(() => savedAnalysis.value?.result ?? sampleAnalysis)
 const requirements = computed(() => analysis.value.requirements)
@@ -91,6 +94,7 @@ function caseKey(index: number) { return `${activeRequirement.value}-TC-${index}
 function caseCode(index: number) { return `TC-${String(index + 1).padStart(3, '0')}` }
 function chooseRequirement(index: number) { activeRequirement.value = index; activeTab.value = 'overview' }
 function toast(message: string) { notice.value = message; window.setTimeout(() => notice.value = '', 4500) }
+function formatVersionTime(value: string) { return new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(value)) }
 
 function prepareDocumentText(content: string) {
   return content.replace(/data:image\/[^;]+;base64,[A-Za-z0-9+/=]+/g, '[图片数据已省略]')
@@ -130,7 +134,7 @@ function toggleQuestion(index: number) {
 
 async function loadSavedAnalysis() {
   try {
-    const [healthResponse, latestResponse, executionResponse, environmentResponse] = await Promise.all([fetch('/api/health'), fetch('/api/analyses/latest'), fetch('/api/executions/latest'), fetch('/api/environments/latest')])
+    const [healthResponse, latestResponse, executionResponse, environmentResponse, historyResponse] = await Promise.all([fetch('/api/health'), fetch('/api/analyses/latest'), fetch('/api/executions/latest'), fetch('/api/environments/latest'), fetch('/api/analyses')])
     if (healthResponse.ok) apiConfigured.value = Boolean((await healthResponse.json()).configured)
     if (latestResponse.ok) {
       const payload = await latestResponse.json() as { analysis: SavedAnalysis | null }
@@ -148,8 +152,38 @@ async function loadSavedAnalysis() {
         targetUrl.value = saved.baseUrl
       }
     }
+    if (historyResponse.ok) analysisHistory.value = (await historyResponse.json() as { analyses: AnalysisSummary[] }).analyses
   } catch {
     apiConfigured.value = false
+  }
+}
+
+async function refreshAnalysisHistory() {
+  const response = await fetch('/api/analyses')
+  if (response.ok) analysisHistory.value = (await response.json() as { analyses: AnalysisSummary[] }).analyses
+}
+
+async function switchVersion(id: string) {
+  if (id === savedAnalysis.value?.id) {
+    versionMenuOpen.value = false
+    return
+  }
+  switchingVersion.value = true
+  try {
+    const response = await fetch(`/api/analyses/${encodeURIComponent(id)}`)
+    const payload = await response.json() as { analysis?: SavedAnalysis; error?: string }
+    if (!response.ok || !payload.analysis) throw new Error(payload.error ?? '版本加载失败')
+    savedAnalysis.value = payload.analysis
+    applyReview(payload.analysis)
+    activeRequirement.value = 0
+    activeTab.value = 'overview'
+    latestAutomationPlan.value = null
+    versionMenuOpen.value = false
+    toast(`已切换到 ${payload.analysis.result.versionName}`)
+  } catch (error) {
+    toast(`版本切换失败：${error instanceof Error ? error.message : '未知错误'}`)
+  } finally {
+    switchingVersion.value = false
   }
 }
 
@@ -286,6 +320,7 @@ async function importPrd(event: Event) {
     activeTab.value = 'overview'
     confirmed.value = {}
     selectedCases.value = {}
+    await refreshAnalysisHistory()
     toast(`DeepSeek 已联合解析 ${files.length} 份材料，提取 ${payload.analysis.result.requirements.length} 个需求`)
   } catch (error) {
     toast(`解析失败：${error instanceof Error ? error.message : '未知错误'}`)
@@ -309,7 +344,7 @@ onMounted(loadSavedAnalysis)
     </aside>
 
     <main>
-      <header class="topbar"><div><span>版本中心</span><b>/</b><strong>{{ analysis.versionName }}</strong></div><label :class="['import',{disabled:analyzing}]"><input :disabled="analyzing" multiple type="file" accept=".md,.markdown,.txt" @change="importPrd" />{{ analyzing ? 'AI 解析中…' : '＋ 导入需求材料' }}</label></header>
+      <header class="topbar"><div class="version-switcher"><span>版本中心</span><b>/</b><button :disabled="switchingVersion" @click="versionMenuOpen=!versionMenuOpen"><strong>{{ analysis.versionName }}</strong><i>⌄</i></button><div v-if="versionMenuOpen" class="version-menu"><header><strong>版本记录</strong><span>{{ analysisHistory.length }} 个版本</span></header><button v-for="item in analysisHistory" :key="item.id" :class="{active:item.id===savedAnalysis?.id}" @click="switchVersion(item.id)"><i>{{ item.id===savedAnalysis?.id ? '✓' : '版' }}</i><span><strong>{{ item.productName }} · {{ item.versionName }}</strong><small>{{ formatVersionTime(item.createdAt) }} · {{ item.requirementCount }} 项需求 · {{ item.testCaseCount }} 条用例</small><em><b :style="{width:`${item.questionCount ? Math.round(item.confirmedQuestionCount/item.questionCount*100) : 100}%`}"></b></em></span></button><p v-if="!analysisHistory.length">导入第一份 PRD 后会形成版本记录</p></div></div><label :class="['import',{disabled:analyzing}]"><input :disabled="analyzing" multiple type="file" accept=".md,.markdown,.txt" @change="importPrd" />{{ analyzing ? 'AI 解析中…' : '＋ 导入需求材料' }}</label></header>
       <div class="workspace">
         <section class="heading"><div><small><i></i>{{ savedAnalysis ? `真实解析 · ${savedAnalysis.provider}` : '示例模式 · 等待导入 PRD' }}</small><h1>{{ analysis.productName }} · {{ analysis.versionName }}</h1><p>{{ analysis.overview }}</p></div><div><button>分享评审</button><button class="primary" @click="activeTab='cases';toast('已切换到当前测试用例')">查看测试建议</button></div></section>
         <section class="metrics"><article><i class="purple">需</i><p><span>前端需求</span><strong>{{ requirements.length }}</strong><small>{{ savedAnalysis ? 'DeepSeek 已解析' : '当前为示例数据' }}</small></p></article><article><i class="amber">?</i><p><span>待确认问题</span><strong>{{ totalQuestions }}</strong><small>影响规则与用例</small></p></article><article><i class="blue">例</i><p><span>测试用例</span><strong>{{ totalCases }}</strong><small>{{ readyCases }} 条可执行</small></p></article><article><i class="green">✓</i><p><span>当前可执行率</span><strong>{{ coverage }}%</strong><small>确认后继续提升</small></p></article></section>

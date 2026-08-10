@@ -3,6 +3,23 @@
   box-shadow: 0 0 0 5px #f59e0b18;
 }
 
+.version-switcher { position:relative; align-items:center; }
+.version-switcher > button { display:flex; align-items:center; gap:7px; border:0; background:transparent; color:#19202e; padding:6px 3px; cursor:pointer; }
+.version-switcher > button i { color:#8b94a3; font-style:normal; }
+.version-menu { position:absolute; z-index:30; top:40px; left:48px; width:340px; padding:10px; border:1px solid #e1e5eb; border-radius:12px; background:#fff; box-shadow:0 18px 45px #11182724; }
+.version-menu header { display:flex; align-items:center; justify-content:space-between; padding:4px 5px 10px; border-bottom:1px solid #edf0f4; }
+.version-menu header strong { font-size:11px; }
+.version-menu header span { font-size:9px; }
+.version-menu > button { width:100%; display:grid; grid-template-columns:28px 1fr; gap:9px; align-items:start; border:0; border-radius:8px; background:#fff; padding:10px 7px; text-align:left; cursor:pointer; }
+.version-menu > button:hover,.version-menu > button.active { background:#f7f6ff; }
+.version-menu > button > i { width:25px; height:25px; display:grid; place-items:center; border-radius:7px; background:#eeecff; color:#6258df; font-size:9px; font-style:normal; }
+.version-menu > button > span { display:flex; flex-direction:column; gap:4px; min-width:0; }
+.version-menu > button strong { font-size:10px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.version-menu > button small { color:#8992a1; font-size:8px; }
+.version-menu > button em { height:3px; overflow:hidden; border-radius:2px; background:#e9ebf0; }
+.version-menu > button em b { display:block; height:100%; background:#6d63e7; }
+.version-menu > p { margin:12px 5px; color:#8a93a2; font-size:9px; }
+
 .import.disabled {
   cursor: wait;
   opacity: 0.65;

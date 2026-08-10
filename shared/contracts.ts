@@ -54,6 +54,20 @@ export interface SavedAnalysis {
   review: ReviewState
 }
 
+export interface AnalysisSummary {
+  id: string
+  versionName: string
+  productName: string
+  requirementCount: number
+  questionCount: number
+  confirmedQuestionCount: number
+  testCaseCount: number
+  selectedCaseCount: number
+  provider: string
+  model: string
+  createdAt: string
+}
+
 export interface ReviewState {
   confirmedQuestions: string[]
   selectedCases: string[]
