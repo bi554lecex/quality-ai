@@ -1,5 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import { randomUUID } from 'node:crypto'
+import { createReadStream, existsSync } from 'node:fs'
+import { basename, resolve } from 'node:path'
 import { analyzePrd } from './model'
 import { getAnalysisById, getLatestAnalysis, getLatestAutomationPlan, getLatestExecution, saveAnalysis, saveAutomationPlan, saveExecution, saveReview } from './database'
 import { runAutomationPlan } from './playwright-runner'
@@ -52,6 +54,21 @@ const server = createServer(async (request, response) => {
 
     if (request.method === 'GET' && request.url === '/api/executions/latest') {
       return json(response, 200, { execution: getLatestExecution() })
+    }
+
+    const artifactMatch = request.url?.match(/^\/api\/artifacts\/([a-f0-9-]+)\/([^/?]+)$/i)
+    if (request.method === 'GET' && artifactMatch) {
+      const executionId = artifactMatch[1]
+      const fileName = basename(decodeURIComponent(artifactMatch[2]))
+      if (!/^(trace\.zip|failure\.png|\d{2}-[\w\u4e00-\u9fa5-]+\.png)$/.test(fileName)) return json(response, 400, { error: '证据文件名不合法' })
+      const filePath = resolve('data/artifacts', executionId, fileName)
+      if (!existsSync(filePath)) return json(response, 404, { error: '证据文件不存在' })
+      response.writeHead(200, {
+        'content-type': fileName.endsWith('.zip') ? 'application/zip' : 'image/png',
+        'content-disposition': `attachment; filename="${encodeURIComponent(fileName)}"`,
+      })
+      createReadStream(filePath).pipe(response)
+      return
     }
 
     if (request.method === 'GET' && request.url === '/api/automation/plans/latest') {

@@ -20,12 +20,14 @@ export async function runAutomationPlan(input: unknown): Promise<ExecutionResult
   const artifactDirectory = resolve('data/artifacts', id)
   await mkdir(artifactDirectory, { recursive: true })
   const screenshots: string[] = []
+  const tracePath = resolve(artifactDirectory, 'trace.zip')
   const stepResults: ExecutionResult['steps'] = []
   const browser = await chromium.launch({ headless: true })
   let executionError: string | undefined
 
   try {
     const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } })
+    await context.tracing.start({ screenshots: true, snapshots: true })
     const page = await context.newPage()
     for (const [index, step] of plan.steps.entries()) {
       const stepStart = Date.now()
@@ -55,6 +57,7 @@ export async function runAutomationPlan(input: unknown): Promise<ExecutionResult
         break
       }
     }
+    await context.tracing.stop({ path: tracePath })
     await context.close()
   } finally {
     await browser.close()
@@ -71,6 +74,7 @@ export async function runAutomationPlan(input: unknown): Promise<ExecutionResult
     durationMs: finishedAt.getTime() - startedAt.getTime(),
     steps: stepResults,
     screenshots,
+    tracePath,
     error: executionError,
   }
 }

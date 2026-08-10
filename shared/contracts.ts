@@ -100,5 +100,6 @@ export interface ExecutionResult {
   durationMs: number
   steps: Array<{ index: number; action: string; status: 'passed' | 'failed'; durationMs: number; error?: string }>
   screenshots: string[]
+  tracePath?: string
   error?: string
 }
