@@ -31,11 +31,12 @@ npm run start
 
 - Vue 3 + TypeScript + Vite
 - DeepSeek/OpenAI-compatible 模型适配层
-- Markdown/TXT PRD 的真实模型解析
+- Markdown/TXT PRD 与接口技术文档的多文件联合解析
 - 基于 Node.js 内置 SQLite 的本地持久化
 - 0825 版本两个真实需求的解析验证
 - 需求概览、页面状态、待确认问题、测试用例四段式流程
 - PRD 文件选择、需求切换、问题确认、用例选择等前端交互
+- 问题确认和用例选择的刷新恢复
 - 为 Playwright 执行层预留位置
 
 未导入 PRD 时页面显示示例数据；成功导入后会明确显示“真实解析”，刷新页面会从 SQLite 恢复最近一次结果。

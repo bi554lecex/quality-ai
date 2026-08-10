@@ -46,8 +46,16 @@ export type PrdAnalysis = z.infer<typeof prdAnalysisSchema>
 export interface SavedAnalysis {
   id: string
   fileName: string
+  fileNames: string[]
   provider: string
   model: string
   createdAt: string
   result: PrdAnalysis
+  review: ReviewState
+}
+
+export interface ReviewState {
+  confirmedQuestions: string[]
+  selectedCases: string[]
+  updatedAt: string | null
 }

@@ -63,6 +63,7 @@ const confirmed = ref<Record<string, boolean>>({})
 const selectedCases = ref<Record<string, boolean>>({})
 const notice = ref('')
 const analyzing = ref(false)
+const reviewSaving = ref(false)
 
 const analysis = computed(() => savedAnalysis.value?.result ?? sampleAnalysis)
 const requirements = computed(() => analysis.value.requirements)
@@ -76,6 +77,7 @@ const readyCases = computed(() => requirements.value.reduce((sum, item) => sum +
 const confirmedCount = computed(() => questions.value.filter((_, index) => confirmed.value[questionKey(index)]).length)
 const selectedCount = computed(() => cases.value.filter((_, index) => selectedCases.value[caseKey(index)]).length)
 const coverage = computed(() => totalCases.value ? Math.round((readyCases.value / totalCases.value) * 100) : 0)
+const sourceFileNames = computed(() => savedAnalysis.value?.fileNames?.length ? savedAnalysis.value.fileNames : [savedAnalysis.value?.fileName ?? '错题本_0825版本需求.md'])
 
 function requirementCode(index: number) { return `REQ-${String(index + 1).padStart(3, '0')}` }
 function questionKey(index: number) { return `${activeRequirement.value}-Q-${index}` }
@@ -84,13 +86,52 @@ function caseCode(index: number) { return `TC-${String(index + 1).padStart(3, '0
 function chooseRequirement(index: number) { activeRequirement.value = index; activeTab.value = 'overview' }
 function toast(message: string) { notice.value = message; window.setTimeout(() => notice.value = '', 4500) }
 
+function prepareDocumentText(content: string) {
+  return content.replace(/data:image\/[^;]+;base64,[A-Za-z0-9+/=]+/g, '[图片数据已省略]')
+}
+
+function applyReview(analysisValue: SavedAnalysis) {
+  confirmed.value = Object.fromEntries((analysisValue.review?.confirmedQuestions ?? []).map(key => [key, true]))
+  selectedCases.value = Object.fromEntries((analysisValue.review?.selectedCases ?? []).map(key => [key, true]))
+}
+
+async function saveCurrentReview() {
+  if (!savedAnalysis.value || reviewSaving.value) return
+  reviewSaving.value = true
+  try {
+    const response = await fetch(`/api/analyses/${encodeURIComponent(savedAnalysis.value.id)}/review`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        confirmedQuestions: Object.keys(confirmed.value).filter(key => confirmed.value[key]),
+        selectedCases: Object.keys(selectedCases.value).filter(key => selectedCases.value[key]),
+      }),
+    })
+    const payload = await response.json() as { review?: SavedAnalysis['review']; error?: string }
+    if (!response.ok || !payload.review) throw new Error(payload.error ?? '保存失败')
+    savedAnalysis.value.review = payload.review
+  } catch (error) {
+    toast(`评审状态保存失败：${error instanceof Error ? error.message : '未知错误'}`)
+  } finally {
+    reviewSaving.value = false
+  }
+}
+
+function toggleQuestion(index: number) {
+  confirmed.value[questionKey(index)] = !confirmed.value[questionKey(index)]
+  void saveCurrentReview()
+}
+
 async function loadSavedAnalysis() {
   try {
     const [healthResponse, latestResponse] = await Promise.all([fetch('/api/health'), fetch('/api/analyses/latest')])
     if (healthResponse.ok) apiConfigured.value = Boolean((await healthResponse.json()).configured)
     if (latestResponse.ok) {
       const payload = await latestResponse.json() as { analysis: SavedAnalysis | null }
-      if (payload.analysis) savedAnalysis.value = payload.analysis
+      if (payload.analysis) {
+        savedAnalysis.value = payload.analysis
+        applyReview(payload.analysis)
+      }
     }
   } catch {
     apiConfigured.value = false
@@ -99,21 +140,26 @@ async function loadSavedAnalysis() {
 
 async function importPrd(event: Event) {
   const input = event.target as HTMLInputElement
-  const file = input.files?.[0]
-  if (!file) return
-  if (!/\.(md|markdown|txt)$/i.test(file.name)) {
-    toast('第一版暂时支持 Markdown 和 TXT 文件')
+  const files = Array.from(input.files ?? [])
+  if (!files.length) return
+  if (files.some(file => !/\.(md|markdown|txt)$/i.test(file.name))) {
+    toast('当前支持 Markdown 和 TXT 文件')
     input.value = ''
     return
   }
 
   analyzing.value = true
-  notice.value = `正在调用 DeepSeek 解析 ${file.name}，请稍候…`
+  notice.value = `正在联合解析 ${files.length} 份需求材料，请稍候…`
   try {
+    const documents = await Promise.all(files.map(async file => ({
+      fileName: file.name,
+      content: prepareDocumentText(await file.text()),
+      role: /接口|技术方案|api/i.test(file.name) ? 'interface' : 'prd',
+    })))
     const response = await fetch('/api/analyze', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ fileName: file.name, content: await file.text() }),
+      body: JSON.stringify({ files: documents }),
     })
     const payload = await response.json() as { analysis?: SavedAnalysis; error?: string }
     if (!response.ok || !payload.analysis) throw new Error(payload.error ?? '解析失败')
@@ -122,7 +168,7 @@ async function importPrd(event: Event) {
     activeTab.value = 'overview'
     confirmed.value = {}
     selectedCases.value = {}
-    toast(`DeepSeek 已提取 ${payload.analysis.result.requirements.length} 个需求`)
+    toast(`DeepSeek 已联合解析 ${files.length} 份材料，提取 ${payload.analysis.result.requirements.length} 个需求`)
   } catch (error) {
     toast(`解析失败：${error instanceof Error ? error.message : '未知错误'}`)
   } finally {
@@ -145,7 +191,7 @@ onMounted(loadSavedAnalysis)
     </aside>
 
     <main>
-      <header class="topbar"><div><span>版本中心</span><b>/</b><strong>{{ analysis.versionName }}</strong></div><label :class="['import',{disabled:analyzing}]"><input :disabled="analyzing" type="file" accept=".md,.markdown,.txt" @change="importPrd" />{{ analyzing ? 'AI 解析中…' : '＋ 导入 PRD' }}</label></header>
+      <header class="topbar"><div><span>版本中心</span><b>/</b><strong>{{ analysis.versionName }}</strong></div><label :class="['import',{disabled:analyzing}]"><input :disabled="analyzing" multiple type="file" accept=".md,.markdown,.txt" @change="importPrd" />{{ analyzing ? 'AI 解析中…' : '＋ 导入需求材料' }}</label></header>
       <div class="workspace">
         <section class="heading"><div><small><i></i>{{ savedAnalysis ? `真实解析 · ${savedAnalysis.provider}` : '示例模式 · 等待导入 PRD' }}</small><h1>{{ analysis.productName }} · {{ analysis.versionName }}</h1><p>{{ analysis.overview }}</p></div><div><button>分享评审</button><button class="primary" @click="activeTab='cases';toast('已切换到当前测试用例')">查看测试建议</button></div></section>
         <section class="metrics"><article><i class="purple">需</i><p><span>前端需求</span><strong>{{ requirements.length }}</strong><small>{{ savedAnalysis ? 'DeepSeek 已解析' : '当前为示例数据' }}</small></p></article><article><i class="amber">?</i><p><span>待确认问题</span><strong>{{ totalQuestions }}</strong><small>影响规则与用例</small></p></article><article><i class="blue">例</i><p><span>测试用例</span><strong>{{ totalCases }}</strong><small>{{ readyCases }} 条可执行</small></p></article><article><i class="green">✓</i><p><span>当前可执行率</span><strong>{{ coverage }}%</strong><small>确认后继续提升</small></p></article></section>
@@ -153,7 +199,7 @@ onMounted(loadSavedAnalysis)
         <section class="content-grid">
           <aside class="requirements"><div class="section-title"><span>版本需求</span><b>{{ requirements.length }} 项</b></div>
             <button v-for="(item,index) in requirements" :key="`${item.title}-${index}`" :class="['req-card',{active:activeRequirement===index}]" @click="chooseRequirement(index)"><small><span>{{ requirementCode(index) }}</span><b :class="{medium:item.risk==='中风险',low:item.risk==='低风险'}">{{ item.risk }}</b></small><strong>{{ item.title }}</strong><p>{{ item.summary }}</p><div><i :style="{width:`${Math.round((item.testCases.filter(test => !test.blockedByQuestion).length / item.testCases.length) * 100)}%`}"></i></div></button>
-            <div class="sources"><span>需求材料</span><div><i>MD</i><p><strong>{{ savedAnalysis?.fileName ?? '错题本_0825版本需求.md' }}</strong><small>{{ savedAnalysis ? '产品需求 · DeepSeek 已解析' : '示例材料 · 等待真实导入' }}</small></p><b>{{ savedAnalysis ? '✓' : '○' }}</b></div></div>
+            <div class="sources"><span>需求材料</span><div v-for="fileName in sourceFileNames" :key="fileName"><i :class="{api:/接口|技术方案|api/i.test(fileName)}">{{ /接口|技术方案|api/i.test(fileName) ? 'API' : 'MD' }}</i><p><strong>{{ fileName }}</strong><small>{{ savedAnalysis ? `${/接口|技术方案|api/i.test(fileName) ? '增强材料' : '产品需求'} · 已联合解析` : '示例材料 · 等待真实导入' }}</small></p><b>{{ savedAnalysis ? '✓' : '○' }}</b></div></div>
           </aside>
 
           <section v-if="requirement" class="detail"><div class="detail-head"><small><span>{{ requirementCode(activeRequirement) }}</span><b>{{ requirement.risk }}</b></small><h2>{{ requirement.title }}</h2><p>{{ requirement.summary }}</p><div><span>◉ 前端需求</span><span>规则 {{ requirement.businessRules.length }}</span><span>问题 {{ requirement.questions.length }}</span><span>用例 {{ requirement.testCases.length }}</span></div></div>
@@ -161,8 +207,8 @@ onMounted(loadSavedAnalysis)
             <div class="tab-content">
               <template v-if="activeTab==='overview'"><article class="ai-insight"><small><b>AI</b> 需求理解</small><h3>{{ requirement.riskReason }}</h3><p>{{ requirement.summary }}</p><button @click="activeTab='states'">查看页面状态 →</button></article><div class="rule-block"><header><h3>提取的业务规则</h3><span>{{ requirement.businessRules.length }} 条规则</span></header><div v-for="(rule,index) in requirement.businessRules" :key="`${rule.description}-${index}`"><span>BR-{{ String(index+1).padStart(2,'0') }}</span><p><strong>{{ rule.description }}</strong><small>{{ rule.evidence }}</small></p><b>有依据</b></div></div></template>
               <template v-else-if="activeTab==='states'"><header class="subhead"><div><h3>页面状态模型</h3><p>由 PRD 规则反推出用户可见状态与系统结果</p></div><span>{{ states.length }} 个关键状态</span></header><div class="flow"><span>进入页面</span><i>→</i><span>判断条件</span><i>→</i><span>回显 / 选择</span><i>→</i><span>保存校验</span></div><div class="state-table"><header><span>触发条件</span><span>页面初始状态</span><span>数据与交互</span><span>提交结果</span></header><div v-for="(state,index) in states" :key="`${state.trigger}-${index}`"><strong>{{ state.trigger }}</strong><span>{{ state.initialState }}</span><span>{{ state.interaction }}</span><span>{{ state.expectedResult }}</span></div></div><div v-if="questions.length" class="warning"><b>!</b><p><strong>存在 {{ questions.length }} 个待确认问题</strong><span>确认后才能稳定生成对应自动化任务。</span></p><button @click="activeTab='questions'">去确认</button></div></template>
-              <template v-else-if="activeTab==='questions'"><header class="subhead"><div><h3>待产品确认</h3><p>确认结果将在下一轮写回业务规则和测试用例</p></div><span>{{ confirmedCount }}/{{ questions.length }} 已确认</span></header><div class="question-list"><article v-for="(q,index) in questions" :key="`${q.title}-${index}`" :class="{done:confirmed[questionKey(index)]}"><i>{{ confirmed[questionKey(index)]?'✓':index+1 }}</i><div><h4>{{ q.title }}</h4><p>{{ q.reason }}</p><small><b>AI 建议</b>{{ q.suggestion }}</small></div><button @click="confirmed[questionKey(index)]=!confirmed[questionKey(index)]">{{ confirmed[questionKey(index)]?'已确认':'采纳建议' }}</button></article><div v-if="!questions.length" class="empty">模型未发现需要产品确认的问题</div></div></template>
-              <template v-else><header class="case-toolbar"><div><h3>测试用例</h3><p>由当前真实业务规则和页面状态生成</p></div><span>已选 {{ selectedCount }}/{{ cases.length }}</span></header><div class="case-table"><header><span></span><span>用例</span><span>类型</span><span>优先级</span><span>状态</span></header><label v-for="(item,index) in cases" :key="`${item.title}-${index}`"><input v-model="selectedCases[caseKey(index)]" type="checkbox"/><span><b>{{ caseCode(index) }}</b><strong>{{ item.title }}</strong></span><span>{{ item.type }}</span><i :class="item.priority.toLowerCase()">{{ item.priority }}</i><em :class="item.blockedByQuestion?'pending':'ready'">{{ item.blockedByQuestion ? '待确认' : '已就绪' }}</em></label></div><div class="automation"><div><b>✦</b><p><strong>{{ selectedCount }} 条用例已准备生成自动化任务</strong><span>Playwright 执行器将在第二轮接入。</span></p></div><button :disabled="!selectedCount" @click="toast(`已保存 ${selectedCount} 条自动化任务草稿`)">生成任务草稿</button></div></template>
+              <template v-else-if="activeTab==='questions'"><header class="subhead"><div><h3>待产品确认</h3><p>确认结果会立即保存，刷新页面不会丢失</p></div><span>{{ reviewSaving ? '保存中…' : `${confirmedCount}/${questions.length} 已确认` }}</span></header><div class="question-list"><article v-for="(q,index) in questions" :key="`${q.title}-${index}`" :class="{done:confirmed[questionKey(index)]}"><i>{{ confirmed[questionKey(index)]?'✓':index+1 }}</i><div><h4>{{ q.title }}</h4><p>{{ q.reason }}</p><small><b>AI 建议</b>{{ q.suggestion }}</small></div><button @click="toggleQuestion(index)">{{ confirmed[questionKey(index)]?'已确认':'采纳建议' }}</button></article><div v-if="!questions.length" class="empty">模型未发现需要产品确认的问题</div></div></template>
+              <template v-else><header class="case-toolbar"><div><h3>测试用例</h3><p>由当前真实业务规则和页面状态生成</p></div><span>{{ reviewSaving ? '保存中…' : `已选 ${selectedCount}/${cases.length}` }}</span></header><div class="case-table"><header><span></span><span>用例</span><span>类型</span><span>优先级</span><span>状态</span></header><label v-for="(item,index) in cases" :key="`${item.title}-${index}`"><input v-model="selectedCases[caseKey(index)]" type="checkbox" @change="saveCurrentReview"/><span><b>{{ caseCode(index) }}</b><strong>{{ item.title }}</strong></span><span>{{ item.type }}</span><i :class="item.priority.toLowerCase()">{{ item.priority }}</i><em :class="item.blockedByQuestion?'pending':'ready'">{{ item.blockedByQuestion ? '待确认' : '已就绪' }}</em></label></div><div class="automation"><div><b>✦</b><p><strong>{{ selectedCount }} 条用例已准备生成自动化任务</strong><span>Playwright 执行器将在下一轮接入。</span></p></div><button :disabled="!selectedCount" @click="toast(`已保存 ${selectedCount} 条自动化任务草稿`)">生成任务草稿</button></div></template>
             </div>
           </section>
         </section>

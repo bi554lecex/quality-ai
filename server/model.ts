@@ -57,9 +57,19 @@ function getConfig(): ModelConfig {
   }
 }
 
-export async function analyzePrd(fileName: string, content: string): Promise<{ result: PrdAnalysis; model: string }> {
+export interface SourceDocument {
+  fileName: string
+  role: 'prd' | 'interface'
+  content: string
+}
+
+export async function analyzePrd(documents: SourceDocument[]): Promise<{ result: PrdAnalysis; model: string }> {
   const config = getConfig()
   let lastError: Error | null = null
+  const documentText = documents.map(document => {
+    const roleName = document.role === 'prd' ? '主 PRD' : '补充接口/技术文档'
+    return `【${roleName}：${document.fileName}】\n${document.content}`
+  }).join('\n\n--- 文档分隔线 ---\n\n')
 
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
@@ -73,7 +83,7 @@ export async function analyzePrd(fileName: string, content: string): Promise<{ r
           model: config.model,
           messages: [
             { role: 'system', content: systemPrompt },
-            { role: 'user', content: `文件名：${fileName}\n\n以下是 PRD 正文：\n${content}` },
+            { role: 'user', content: `以下是本版本的需求材料。主 PRD 决定业务目标；接口或技术文档只用于补充字段、枚举、接口契约和异常分支。如果材料冲突，必须生成待确认问题，不能擅自选择。\n\n${documentText}` },
           ],
           response_format: { type: 'json_object' },
           thinking: { type: 'disabled' },
