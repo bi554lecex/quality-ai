@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import type { ExecutionResult, PrdAnalysis, SavedAnalysis, SavedAutomationPlan } from '../shared/contracts'
+import type { ExecutionResult, PrdAnalysis, SavedAnalysis, SavedAutomationPlan, TestEnvironment } from '../shared/contracts'
 
 type Tab = 'overview' | 'states' | 'questions' | 'cases'
 
@@ -68,6 +68,8 @@ const executionRunning = ref(false)
 const latestExecution = ref<ExecutionResult | null>(null)
 const latestAutomationPlan = ref<SavedAutomationPlan | null>(null)
 const targetUrl = ref('')
+const environment = ref<TestEnvironment | null>(null)
+const environmentName = ref('测试环境')
 
 const analysis = computed(() => savedAnalysis.value?.result ?? sampleAnalysis)
 const requirements = computed(() => analysis.value.requirements)
@@ -128,7 +130,7 @@ function toggleQuestion(index: number) {
 
 async function loadSavedAnalysis() {
   try {
-    const [healthResponse, latestResponse, executionResponse] = await Promise.all([fetch('/api/health'), fetch('/api/analyses/latest'), fetch('/api/executions/latest')])
+    const [healthResponse, latestResponse, executionResponse, environmentResponse] = await Promise.all([fetch('/api/health'), fetch('/api/analyses/latest'), fetch('/api/executions/latest'), fetch('/api/environments/latest')])
     if (healthResponse.ok) apiConfigured.value = Boolean((await healthResponse.json()).configured)
     if (latestResponse.ok) {
       const payload = await latestResponse.json() as { analysis: SavedAnalysis | null }
@@ -138,6 +140,14 @@ async function loadSavedAnalysis() {
       }
     }
     if (executionResponse.ok) latestExecution.value = (await executionResponse.json() as { execution: ExecutionResult | null }).execution
+    if (environmentResponse.ok) {
+      const saved = (await environmentResponse.json() as { environment: TestEnvironment | null }).environment
+      if (saved) {
+        environment.value = saved
+        environmentName.value = saved.name
+        targetUrl.value = saved.baseUrl
+      }
+    }
   } catch {
     apiConfigured.value = false
   }
@@ -172,11 +182,23 @@ async function verifyPlaywright() {
   }
 }
 
+async function persistEnvironment() {
+  const response = await fetch('/api/environments', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ id: environment.value?.id, name: environmentName.value, baseUrl: targetUrl.value }),
+  })
+  const payload = await response.json() as { environment?: TestEnvironment; error?: string }
+  if (!response.ok || !payload.environment) throw new Error(payload.error ?? '测试环境保存失败')
+  environment.value = payload.environment
+  return payload.environment
+}
+
 async function generatePlanOnly() {
   if (!savedAnalysis.value || !selectedCount.value || !targetUrl.value) return toast('请先选择用例并填写测试环境地址')
   executionRunning.value = true
   notice.value = 'DeepSeek 正在生成受控 Playwright 计划…'
   try {
+    await persistEnvironment()
     const generateResponse = await fetch('/api/automation/generate', {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ analysisId: savedAnalysis.value.id, targetUrl: targetUrl.value, caseKeys: Object.keys(selectedCases.value).filter(key => selectedCases.value[key]) }),
@@ -195,13 +217,38 @@ async function runGeneratedPlan() {
   executionRunning.value = true
   notice.value = '正在启动 Chromium 执行已确认计划…'
   try {
-    const runResponse = await fetch('/api/automation/run', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(latestAutomationPlan.value.plan) })
+    const runResponse = await fetch('/api/automation/run', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ plan: latestAutomationPlan.value.plan, environmentId: environment.value?.id }) })
     const runPayload = await runResponse.json() as { execution?: ExecutionResult; error?: string }
     if (!runPayload.execution) throw new Error(runPayload.error ?? '执行失败')
     latestExecution.value = runPayload.execution
     toast(`AI 计划执行${runPayload.execution.status === 'passed' ? '通过' : '失败'}：${runPayload.execution.steps.length} 步`)
   } catch (error) { toast(`执行失败：${error instanceof Error ? error.message : '未知错误'}`) }
   finally { executionRunning.value = false }
+}
+
+async function importStorageState(event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (!file) return
+  if (!environment.value && !targetUrl.value) {
+    toast('请先填写测试环境地址，再导入登录态')
+    input.value = ''
+    return
+  }
+  try {
+    const savedEnvironment = environment.value ?? await persistEnvironment()
+    const response = await fetch(`/api/environments/${encodeURIComponent(savedEnvironment.id)}/storage-state`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: await file.text(),
+    })
+    const payload = await response.json() as { environment?: TestEnvironment; error?: string }
+    if (!response.ok || !payload.environment) throw new Error(payload.error ?? '登录态导入失败')
+    environment.value = payload.environment
+    toast('Playwright 登录态已安全导入，后续执行会自动复用')
+  } catch (error) {
+    toast(`登录态导入失败：${error instanceof Error ? error.message : '文件格式错误'}`)
+  } finally {
+    input.value = ''
+  }
 }
 
 function artifactUrl(path: string) {
@@ -279,7 +326,7 @@ onMounted(loadSavedAnalysis)
               <template v-if="activeTab==='overview'"><article class="ai-insight"><small><b>AI</b> 需求理解</small><h3>{{ requirement.riskReason }}</h3><p>{{ requirement.summary }}</p><button @click="activeTab='states'">查看页面状态 →</button></article><div class="rule-block"><header><h3>提取的业务规则</h3><span>{{ requirement.businessRules.length }} 条规则</span></header><div v-for="(rule,index) in requirement.businessRules" :key="`${rule.description}-${index}`"><span>BR-{{ String(index+1).padStart(2,'0') }}</span><p><strong>{{ rule.description }}</strong><small>{{ rule.evidence }}</small></p><b>有依据</b></div></div></template>
               <template v-else-if="activeTab==='states'"><header class="subhead"><div><h3>页面状态模型</h3><p>由 PRD 规则反推出用户可见状态与系统结果</p></div><span>{{ states.length }} 个关键状态</span></header><div class="flow"><span>进入页面</span><i>→</i><span>判断条件</span><i>→</i><span>回显 / 选择</span><i>→</i><span>保存校验</span></div><div class="state-table"><header><span>触发条件</span><span>页面初始状态</span><span>数据与交互</span><span>提交结果</span></header><div v-for="(state,index) in states" :key="`${state.trigger}-${index}`"><strong>{{ state.trigger }}</strong><span>{{ state.initialState }}</span><span>{{ state.interaction }}</span><span>{{ state.expectedResult }}</span></div></div><div v-if="questions.length" class="warning"><b>!</b><p><strong>存在 {{ questions.length }} 个待确认问题</strong><span>确认后才能稳定生成对应自动化任务。</span></p><button @click="activeTab='questions'">去确认</button></div></template>
               <template v-else-if="activeTab==='questions'"><header class="subhead"><div><h3>待产品确认</h3><p>确认结果会立即保存，刷新页面不会丢失</p></div><span>{{ reviewSaving ? '保存中…' : `${confirmedCount}/${questions.length} 已确认` }}</span></header><div class="question-list"><article v-for="(q,index) in questions" :key="`${q.title}-${index}`" :class="{done:confirmed[questionKey(index)]}"><i>{{ confirmed[questionKey(index)]?'✓':index+1 }}</i><div><h4>{{ q.title }}</h4><p>{{ q.reason }}</p><small><b>AI 建议</b>{{ q.suggestion }}</small></div><button @click="toggleQuestion(index)">{{ confirmed[questionKey(index)]?'已确认':'采纳建议' }}</button></article><div v-if="!questions.length" class="empty">模型未发现需要产品确认的问题</div></div></template>
-              <template v-else><header class="case-toolbar"><div><h3>测试用例</h3><p>由当前真实业务规则和页面状态生成</p></div><span>{{ reviewSaving ? '保存中…' : `已选 ${selectedCount}/${cases.length}` }}</span></header><div class="case-table"><header><span></span><span>用例</span><span>类型</span><span>优先级</span><span>状态</span></header><label v-for="(item,index) in cases" :key="`${item.title}-${index}`"><input v-model="selectedCases[caseKey(index)]" type="checkbox" @change="saveCurrentReview"/><span><b>{{ caseCode(index) }}</b><strong>{{ item.title }}</strong></span><span>{{ item.type }}</span><i :class="item.priority.toLowerCase()">{{ item.priority }}</i><em :class="item.blockedByQuestion?'pending':'ready'">{{ item.blockedByQuestion ? '待确认' : '已就绪' }}</em></label></div><div class="target-config"><input v-model="targetUrl" type="url" placeholder="测试环境地址，例如 https://test.example.com"/><button :disabled="executionRunning || !selectedCount || !targetUrl" @click="generatePlanOnly">{{ executionRunning ? '生成中…' : 'AI 生成计划' }}</button></div><div v-if="latestAutomationPlan" class="plan-preview"><header><strong>{{ latestAutomationPlan.plan.name }}</strong><button :disabled="executionRunning" @click="runGeneratedPlan">{{ executionRunning ? '执行中…' : '确认并执行' }}</button></header><ol><li v-for="(step,index) in latestAutomationPlan.plan.steps" :key="index"><b>{{ index+1 }}</b><span>{{ step.action }}</span><code>{{ 'text' in step ? step.text : 'path' in step ? step.path : 'name' in step ? step.name : step.locator.value }}</code></li></ol></div><div class="automation"><div><b>✦</b><p><strong>Playwright 真实执行器</strong><span v-if="latestExecution">最近执行：{{ latestExecution.status === 'passed' ? '通过' : '失败' }} · {{ latestExecution.durationMs }}ms · {{ latestExecution.steps.length }} 步</span><span v-else>尚未执行浏览器测试</span></p></div><button :disabled="executionRunning" @click="verifyPlaywright">验证执行器</button></div><div v-if="latestExecution" class="execution-report"><div v-for="step in latestExecution.steps" :key="step.index"><b :class="step.status">{{ step.status==='passed'?'✓':'×' }}</b><span>步骤 {{ step.index+1 }} · {{ step.action }}</span><small>{{ step.durationMs }}ms</small></div><footer><a v-if="latestExecution.tracePath" :href="artifactUrl(latestExecution.tracePath)">下载 Trace</a><a v-for="shot in latestExecution.screenshots" :key="shot" :href="artifactUrl(shot)">下载截图</a></footer></div></template>
+              <template v-else><header class="case-toolbar"><div><h3>测试用例</h3><p>由当前真实业务规则和页面状态生成</p></div><span>{{ reviewSaving ? '保存中…' : `已选 ${selectedCount}/${cases.length}` }}</span></header><div class="case-table"><header><span></span><span>用例</span><span>类型</span><span>优先级</span><span>状态</span></header><label v-for="(item,index) in cases" :key="`${item.title}-${index}`"><input v-model="selectedCases[caseKey(index)]" type="checkbox" @change="saveCurrentReview"/><span><b>{{ caseCode(index) }}</b><strong>{{ item.title }}</strong></span><span>{{ item.type }}</span><i :class="item.priority.toLowerCase()">{{ item.priority }}</i><em :class="item.blockedByQuestion?'pending':'ready'">{{ item.blockedByQuestion ? '待确认' : '已就绪' }}</em></label></div><div class="environment-config"><input v-model="environmentName" placeholder="环境名称"/><span :class="{ ready: environment?.hasStorageState }">{{ environment?.hasStorageState ? '✓ 已配置登录态' : '未配置登录态' }}</span><label><input type="file" accept=".json,application/json" @change="importStorageState"/>导入 storageState</label></div><div class="target-config"><input v-model="targetUrl" type="url" placeholder="测试环境地址，例如 https://test.example.com"/><button :disabled="executionRunning || !selectedCount || !targetUrl" @click="generatePlanOnly">{{ executionRunning ? '生成中…' : 'AI 生成计划' }}</button></div><div v-if="latestAutomationPlan" class="plan-preview"><header><strong>{{ latestAutomationPlan.plan.name }}</strong><button :disabled="executionRunning" @click="runGeneratedPlan">{{ executionRunning ? '执行中…' : '确认并执行' }}</button></header><ol><li v-for="(step,index) in latestAutomationPlan.plan.steps" :key="index"><b>{{ index+1 }}</b><span>{{ step.action }}</span><code>{{ 'text' in step ? step.text : 'path' in step ? step.path : 'name' in step ? step.name : step.locator.value }}</code></li></ol></div><div class="automation"><div><b>✦</b><p><strong>Playwright 真实执行器</strong><span v-if="latestExecution">最近执行：{{ latestExecution.status === 'passed' ? '通过' : '失败' }} · {{ latestExecution.durationMs }}ms · {{ latestExecution.steps.length }} 步</span><span v-else>尚未执行浏览器测试</span></p></div><button :disabled="executionRunning" @click="verifyPlaywright">验证执行器</button></div><div v-if="latestExecution" class="execution-report"><div v-for="step in latestExecution.steps" :key="step.index"><b :class="step.status">{{ step.status==='passed'?'✓':'×' }}</b><span>步骤 {{ step.index+1 }} · {{ step.action }}</span><small>{{ step.durationMs }}ms</small></div><footer><a v-if="latestExecution.tracePath" :href="artifactUrl(latestExecution.tracePath)">下载 Trace</a><a v-for="shot in latestExecution.screenshots" :key="shot" :href="artifactUrl(shot)">下载截图</a></footer></div></template>
             </div>
           </section>
         </section>

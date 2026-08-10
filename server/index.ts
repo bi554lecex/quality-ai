@@ -1,11 +1,13 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import { randomUUID } from 'node:crypto'
 import { createReadStream, existsSync } from 'node:fs'
+import { mkdir, writeFile } from 'node:fs/promises'
 import { basename, resolve } from 'node:path'
 import { analyzePrd } from './model'
-import { getAnalysisById, getLatestAnalysis, getLatestAutomationPlan, getLatestExecution, saveAnalysis, saveAutomationPlan, saveExecution, saveReview } from './database'
+import { getAnalysisById, getEnvironmentById, getLatestAnalysis, getLatestAutomationPlan, getLatestEnvironment, getLatestExecution, saveAnalysis, saveAutomationPlan, saveEnvironment, saveExecution, saveReview, setEnvironmentStorageState } from './database'
 import { runAutomationPlan } from './playwright-runner'
 import { generateAutomationPlan } from './model'
+import { storageStateSchema } from '../shared/contracts'
 
 const port = Number(process.env.API_PORT ?? 8787)
 const maxBodySize = 10 * 1024 * 1024
@@ -56,6 +58,31 @@ const server = createServer(async (request, response) => {
       return json(response, 200, { execution: getLatestExecution() })
     }
 
+    if (request.method === 'GET' && request.url === '/api/environments/latest') return json(response, 200, { environment: getLatestEnvironment() })
+
+    if (request.method === 'POST' && request.url === '/api/environments') {
+      const body = await readJson(request)
+      const name = typeof body.name === 'string' ? body.name.trim() : ''
+      const baseUrl = typeof body.baseUrl === 'string' ? body.baseUrl.trim() : ''
+      const id = typeof body.id === 'string' ? body.id : undefined
+      if (!name || !baseUrl) return json(response, 400, { error: '环境名称和地址不能为空' })
+      const url = new URL(baseUrl)
+      if (!['http:', 'https:'].includes(url.protocol)) return json(response, 400, { error: '环境地址只允许 HTTP 或 HTTPS' })
+      return json(response, 200, { environment: saveEnvironment({ id, name, baseUrl: url.origin }) })
+    }
+
+    const stateMatch = request.url?.match(/^\/api\/environments\/([a-f0-9-]+)\/storage-state$/i)
+    if (request.method === 'POST' && stateMatch) {
+      const environment = getEnvironmentById(stateMatch[1])
+      if (!environment) return json(response, 404, { error: '测试环境不存在' })
+      const storageState = storageStateSchema.parse(await readJson(request))
+      const directory = resolve('data/auth')
+      await mkdir(directory, { recursive: true })
+      const statePath = resolve(directory, `${environment.id}.json`)
+      await writeFile(statePath, JSON.stringify(storageState), { mode: 0o600 })
+      return json(response, 200, { environment: setEnvironmentStorageState(environment.id, statePath) })
+    }
+
     const artifactMatch = request.url?.match(/^\/api\/artifacts\/([a-f0-9-]+)\/([^/?]+)$/i)
     if (request.method === 'GET' && artifactMatch) {
       const executionId = artifactMatch[1]
@@ -95,7 +122,11 @@ const server = createServer(async (request, response) => {
     }
 
     if (request.method === 'POST' && request.url === '/api/automation/run') {
-      const result = await runAutomationPlan(await readJson(request))
+      const body = await readJson(request)
+      const wrappedPlan = body.plan ?? body
+      const environmentId = typeof body.environmentId === 'string' ? body.environmentId : undefined
+      const environment = environmentId ? getEnvironmentById(environmentId) : null
+      const result = await runAutomationPlan(wrappedPlan, environment?.storageStatePath)
       saveExecution(result)
       return json(response, result.status === 'passed' ? 201 : 422, { execution: result })
     }

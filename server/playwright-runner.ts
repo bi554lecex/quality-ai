@@ -11,7 +11,7 @@ function locatorFor(page: Page, locator: { by: string; value: string; name?: str
   return page.locator(locator.value)
 }
 
-export async function runAutomationPlan(input: unknown): Promise<ExecutionResult> {
+export async function runAutomationPlan(input: unknown, storageStatePath?: string): Promise<ExecutionResult> {
   const plan: AutomationPlan = automationPlanSchema.parse(input)
   const baseUrl = new URL(plan.targetUrl)
   if (!['http:', 'https:'].includes(baseUrl.protocol)) throw new Error('测试地址只允许 HTTP 或 HTTPS')
@@ -26,7 +26,7 @@ export async function runAutomationPlan(input: unknown): Promise<ExecutionResult
   let executionError: string | undefined
 
   try {
-    const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } })
+    const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, storageState: storageStatePath })
     await context.tracing.start({ screenshots: true, snapshots: true })
     const page = await context.newPage()
     for (const [index, step] of plan.steps.entries()) {

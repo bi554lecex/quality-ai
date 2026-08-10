@@ -34,6 +34,12 @@
 }
 
 .target-config { display:flex; gap:8px; margin-top:14px; }
+.environment-config { display:grid; grid-template-columns:150px 1fr auto; gap:8px; align-items:center; margin-top:14px; }
+.environment-config > input { border:1px solid #dfe3ea; border-radius:8px; padding:9px 11px; font-size:10px; min-width:0; }
+.environment-config > span { color:#8a93a2; font-size:9px; }
+.environment-config > span.ready { color:#059669; }
+.environment-config > label { border:1px solid #dfe3ea; border-radius:8px; padding:8px 11px; font-size:9px; cursor:pointer; color:#4f46e5; }
+.environment-config > label input { display:none; }
 .target-config input { flex:1; border:1px solid #dfe3ea; border-radius:8px; padding:9px 11px; font-size:10px; }
 .target-config button { border:0; border-radius:8px; background:#111827; color:#fff; padding:0 14px; font-size:9px; cursor:pointer; }
 .target-config button:disabled { opacity:.45; cursor:not-allowed; }

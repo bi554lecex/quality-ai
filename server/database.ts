@@ -1,7 +1,8 @@
 import { mkdirSync } from 'node:fs'
+import { randomUUID } from 'node:crypto'
 import { dirname, resolve } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import type { AutomationPlan, ExecutionResult, PrdAnalysis, ReviewState, SavedAnalysis, SavedAutomationPlan } from '../shared/contracts'
+import type { AutomationPlan, ExecutionResult, PrdAnalysis, ReviewState, SavedAnalysis, SavedAutomationPlan, TestEnvironment } from '../shared/contracts'
 
 const databasePath = resolve('data/quality-ai.sqlite')
 mkdirSync(dirname(databasePath), { recursive: true })
@@ -39,6 +40,14 @@ database.exec(`
     plan_json TEXT NOT NULL,
     created_at TEXT NOT NULL,
     FOREIGN KEY (analysis_id) REFERENCES analyses(id) ON DELETE CASCADE
+  );
+  CREATE TABLE IF NOT EXISTS test_environments (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    base_url TEXT NOT NULL,
+    storage_state_path TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
   );
 `)
 
@@ -132,4 +141,51 @@ export function getLatestAutomationPlan(): SavedAutomationPlan | null {
   const row = database.prepare('SELECT id, analysis_id, case_keys_json, plan_json, created_at FROM automation_plans ORDER BY created_at DESC LIMIT 1').get() as Record<string, string> | undefined
   if (!row) return null
   return { id: row.id, analysisId: row.analysis_id, caseKeys: JSON.parse(row.case_keys_json) as string[], plan: JSON.parse(row.plan_json) as AutomationPlan, createdAt: row.created_at }
+}
+
+function mapEnvironment(row: Record<string, string> | undefined): TestEnvironment | null {
+  if (!row) return null
+  return { id: row.id, name: row.name, baseUrl: row.base_url, hasStorageState: Boolean(row.storage_state_path), createdAt: row.created_at, updatedAt: row.updated_at }
+}
+
+export function saveEnvironment(input: { id?: string; name: string; baseUrl: string }): TestEnvironment {
+  const now = new Date().toISOString()
+  const id = input.id ?? randomUUID()
+  database.prepare(`INSERT INTO test_environments (id,name,base_url,created_at,updated_at) VALUES (?,?,?,?,?)
+    ON CONFLICT(id) DO UPDATE SET name=excluded.name,base_url=excluded.base_url,updated_at=excluded.updated_at`)
+    .run(id, input.name, input.baseUrl, now, now)
+  const environment = getEnvironmentById(id)
+  if (!environment) throw new Error('测试环境保存失败')
+  return mapEnvironment({
+    id: environment.id,
+    name: environment.name,
+    base_url: environment.baseUrl,
+    storage_state_path: environment.storageStatePath ?? '',
+    created_at: environment.createdAt,
+    updated_at: environment.updatedAt,
+  }) as TestEnvironment
+}
+
+export function setEnvironmentStorageState(id: string, path: string): TestEnvironment {
+  database.prepare('UPDATE test_environments SET storage_state_path=?, updated_at=? WHERE id=?').run(path, new Date().toISOString(), id)
+  const environment = getEnvironmentById(id)
+  if (!environment) throw new Error('测试环境不存在')
+  return mapEnvironment({
+    id: environment.id,
+    name: environment.name,
+    base_url: environment.baseUrl,
+    storage_state_path: environment.storageStatePath ?? '',
+    created_at: environment.createdAt,
+    updated_at: environment.updatedAt,
+  }) as TestEnvironment
+}
+
+export function getEnvironmentById(id: string): (TestEnvironment & { storageStatePath?: string }) | null {
+  const row = database.prepare('SELECT * FROM test_environments WHERE id=?').get(id) as Record<string, string> | undefined
+  const environment = mapEnvironment(row)
+  return environment ? { ...environment, storageStatePath: row?.storage_state_path || undefined } : null
+}
+
+export function getLatestEnvironment(): TestEnvironment | null {
+  return mapEnvironment(database.prepare('SELECT * FROM test_environments ORDER BY updated_at DESC LIMIT 1').get() as Record<string, string> | undefined)
 }

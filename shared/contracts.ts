@@ -90,6 +90,26 @@ export interface SavedAutomationPlan {
   plan: AutomationPlan
 }
 
+export interface TestEnvironment {
+  id: string
+  name: string
+  baseUrl: string
+  hasStorageState: boolean
+  createdAt: string
+  updatedAt: string
+}
+
+export const storageStateSchema = z.object({
+  cookies: z.array(z.object({
+    name: z.string(), value: z.string(), domain: z.string(), path: z.string(),
+    expires: z.number(), httpOnly: z.boolean(), secure: z.boolean(), sameSite: z.enum(['Strict', 'Lax', 'None']),
+  }).passthrough()),
+  origins: z.array(z.object({
+    origin: z.string().url(),
+    localStorage: z.array(z.object({ name: z.string(), value: z.string() })),
+  })),
+})
+
 export interface ExecutionResult {
   id: string
   name: string

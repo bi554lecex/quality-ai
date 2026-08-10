@@ -37,11 +37,20 @@ npm run start
 - 需求概览、页面状态、待确认问题、测试用例四段式流程
 - PRD 文件选择、需求切换、问题确认、用例选择等前端交互
 - 问题确认和用例选择的刷新恢复
-- 为 Playwright 执行层预留位置
 - Playwright 受控步骤 DSL、真实 Chromium 执行、截图与结果持久化
 - 选中业务用例后由 DeepSeek 生成受控 DSL，并可对指定测试环境立即执行
+- 测试环境持久化与 Playwright `storageState` 登录态导入、复用
+- 登录态仅保存在 Git 忽略的 `data/auth` 目录，接口只返回是否已配置，不返回凭据或磁盘路径
 
 未导入 PRD 时页面显示示例数据；成功导入后会明确显示“真实解析”，刷新页面会从 SQLite 恢复最近一次结果。
+
+需要测试登录后的 B 端页面时，可先使用 Playwright 生成登录态文件：
+
+```bash
+npx playwright codegen --save-storage=storage-state.json https://你的测试环境地址
+```
+
+在打开的浏览器中完成登录并关闭窗口，然后在“测试用例”页签保存测试环境并导入该 JSON。后续确认执行 AI 计划时会自动复用对应环境的登录态。
 
 ## 常用命令
 
