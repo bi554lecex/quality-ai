@@ -1,7 +1,7 @@
 import { mkdirSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import type { PrdAnalysis, ReviewState, SavedAnalysis } from '../shared/contracts'
+import type { ExecutionResult, PrdAnalysis, ReviewState, SavedAnalysis } from '../shared/contracts'
 
 const databasePath = resolve('data/quality-ai.sqlite')
 mkdirSync(dirname(databasePath), { recursive: true })
@@ -24,6 +24,13 @@ database.exec(`
     selected_cases_json TEXT NOT NULL DEFAULT '[]',
     updated_at TEXT NOT NULL,
     FOREIGN KEY (analysis_id) REFERENCES analyses(id) ON DELETE CASCADE
+  );
+  CREATE TABLE IF NOT EXISTS executions (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    status TEXT NOT NULL,
+    result_json TEXT NOT NULL,
+    created_at TEXT NOT NULL
   );
 `)
 
@@ -87,4 +94,14 @@ export function saveReview(analysisId: string, review: Omit<ReviewState, 'update
       updated_at = excluded.updated_at
   `).run(analysisId, JSON.stringify(review.confirmedQuestions), JSON.stringify(review.selectedCases), updatedAt)
   return { ...review, updatedAt }
+}
+
+export function saveExecution(result: ExecutionResult) {
+  database.prepare('INSERT INTO executions (id, name, status, result_json, created_at) VALUES (?, ?, ?, ?, ?)')
+    .run(result.id, result.name, result.status, JSON.stringify(result), result.startedAt)
+}
+
+export function getLatestExecution(): ExecutionResult | null {
+  const row = database.prepare('SELECT result_json FROM executions ORDER BY created_at DESC LIMIT 1').get() as { result_json: string } | undefined
+  return row ? JSON.parse(row.result_json) as ExecutionResult : null
 }

@@ -59,3 +59,38 @@ export interface ReviewState {
   selectedCases: string[]
   updatedAt: string | null
 }
+
+export const locatorSchema = z.object({
+  by: z.enum(['role', 'label', 'text', 'css']),
+  value: z.string().min(1),
+  name: z.string().optional(),
+})
+
+export const automationStepSchema = z.discriminatedUnion('action', [
+  z.object({ action: z.literal('goto'), path: z.string().min(1) }),
+  z.object({ action: z.literal('click'), locator: locatorSchema }),
+  z.object({ action: z.literal('fill'), locator: locatorSchema, value: z.string() }),
+  z.object({ action: z.literal('expectText'), text: z.string().min(1) }),
+  z.object({ action: z.literal('screenshot'), name: z.string().min(1) }),
+])
+
+export const automationPlanSchema = z.object({
+  name: z.string().min(1),
+  targetUrl: z.string().url(),
+  steps: z.array(automationStepSchema).min(1).max(50),
+})
+
+export type AutomationPlan = z.infer<typeof automationPlanSchema>
+
+export interface ExecutionResult {
+  id: string
+  name: string
+  targetUrl: string
+  status: 'passed' | 'failed'
+  startedAt: string
+  finishedAt: string
+  durationMs: number
+  steps: Array<{ index: number; action: string; status: 'passed' | 'failed'; durationMs: number; error?: string }>
+  screenshots: string[]
+  error?: string
+}

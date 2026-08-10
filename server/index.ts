@@ -1,7 +1,8 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import { randomUUID } from 'node:crypto'
 import { analyzePrd } from './model'
-import { getLatestAnalysis, saveAnalysis, saveReview } from './database'
+import { getLatestAnalysis, getLatestExecution, saveAnalysis, saveExecution, saveReview } from './database'
+import { runAutomationPlan } from './playwright-runner'
 
 const port = Number(process.env.API_PORT ?? 8787)
 const maxBodySize = 10 * 1024 * 1024
@@ -46,6 +47,16 @@ const server = createServer(async (request, response) => {
 
     if (request.method === 'GET' && request.url === '/api/analyses/latest') {
       return json(response, 200, { analysis: getLatestAnalysis() })
+    }
+
+    if (request.method === 'GET' && request.url === '/api/executions/latest') {
+      return json(response, 200, { execution: getLatestExecution() })
+    }
+
+    if (request.method === 'POST' && request.url === '/api/automation/run') {
+      const result = await runAutomationPlan(await readJson(request))
+      saveExecution(result)
+      return json(response, result.status === 'passed' ? 201 : 422, { execution: result })
     }
 
     if (request.method === 'POST' && request.url === '/api/analyze') {

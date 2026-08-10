@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import type { PrdAnalysis, SavedAnalysis } from '../shared/contracts'
+import type { ExecutionResult, PrdAnalysis, SavedAnalysis } from '../shared/contracts'
 
 type Tab = 'overview' | 'states' | 'questions' | 'cases'
 
@@ -64,6 +64,8 @@ const selectedCases = ref<Record<string, boolean>>({})
 const notice = ref('')
 const analyzing = ref(false)
 const reviewSaving = ref(false)
+const executionRunning = ref(false)
+const latestExecution = ref<ExecutionResult | null>(null)
 
 const analysis = computed(() => savedAnalysis.value?.result ?? sampleAnalysis)
 const requirements = computed(() => analysis.value.requirements)
@@ -124,7 +126,7 @@ function toggleQuestion(index: number) {
 
 async function loadSavedAnalysis() {
   try {
-    const [healthResponse, latestResponse] = await Promise.all([fetch('/api/health'), fetch('/api/analyses/latest')])
+    const [healthResponse, latestResponse, executionResponse] = await Promise.all([fetch('/api/health'), fetch('/api/analyses/latest'), fetch('/api/executions/latest')])
     if (healthResponse.ok) apiConfigured.value = Boolean((await healthResponse.json()).configured)
     if (latestResponse.ok) {
       const payload = await latestResponse.json() as { analysis: SavedAnalysis | null }
@@ -133,8 +135,38 @@ async function loadSavedAnalysis() {
         applyReview(payload.analysis)
       }
     }
+    if (executionResponse.ok) latestExecution.value = (await executionResponse.json() as { execution: ExecutionResult | null }).execution
   } catch {
     apiConfigured.value = false
+  }
+}
+
+async function verifyPlaywright() {
+  executionRunning.value = true
+  notice.value = '正在启动 Chromium 执行真实浏览器测试…'
+  try {
+    const response = await fetch('/api/automation/run', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        name: '知测 AI 本地冒烟测试',
+        targetUrl: window.location.origin,
+        steps: [
+          { action: 'goto', path: '/' },
+          { action: 'expectText', text: '知测 AI' },
+          { action: 'expectText', text: analysis.value.productName },
+          { action: 'screenshot', name: '工作台首页' },
+        ],
+      }),
+    })
+    const payload = await response.json() as { execution?: ExecutionResult; error?: string }
+    if (!payload.execution) throw new Error(payload.error ?? '执行失败')
+    latestExecution.value = payload.execution
+    toast(`Playwright 执行${payload.execution.status === 'passed' ? '通过' : '失败'}，共 ${payload.execution.steps.length} 个步骤`)
+  } catch (error) {
+    toast(`Playwright 执行失败：${error instanceof Error ? error.message : '未知错误'}`)
+  } finally {
+    executionRunning.value = false
   }
 }
 
@@ -208,7 +240,7 @@ onMounted(loadSavedAnalysis)
               <template v-if="activeTab==='overview'"><article class="ai-insight"><small><b>AI</b> 需求理解</small><h3>{{ requirement.riskReason }}</h3><p>{{ requirement.summary }}</p><button @click="activeTab='states'">查看页面状态 →</button></article><div class="rule-block"><header><h3>提取的业务规则</h3><span>{{ requirement.businessRules.length }} 条规则</span></header><div v-for="(rule,index) in requirement.businessRules" :key="`${rule.description}-${index}`"><span>BR-{{ String(index+1).padStart(2,'0') }}</span><p><strong>{{ rule.description }}</strong><small>{{ rule.evidence }}</small></p><b>有依据</b></div></div></template>
               <template v-else-if="activeTab==='states'"><header class="subhead"><div><h3>页面状态模型</h3><p>由 PRD 规则反推出用户可见状态与系统结果</p></div><span>{{ states.length }} 个关键状态</span></header><div class="flow"><span>进入页面</span><i>→</i><span>判断条件</span><i>→</i><span>回显 / 选择</span><i>→</i><span>保存校验</span></div><div class="state-table"><header><span>触发条件</span><span>页面初始状态</span><span>数据与交互</span><span>提交结果</span></header><div v-for="(state,index) in states" :key="`${state.trigger}-${index}`"><strong>{{ state.trigger }}</strong><span>{{ state.initialState }}</span><span>{{ state.interaction }}</span><span>{{ state.expectedResult }}</span></div></div><div v-if="questions.length" class="warning"><b>!</b><p><strong>存在 {{ questions.length }} 个待确认问题</strong><span>确认后才能稳定生成对应自动化任务。</span></p><button @click="activeTab='questions'">去确认</button></div></template>
               <template v-else-if="activeTab==='questions'"><header class="subhead"><div><h3>待产品确认</h3><p>确认结果会立即保存，刷新页面不会丢失</p></div><span>{{ reviewSaving ? '保存中…' : `${confirmedCount}/${questions.length} 已确认` }}</span></header><div class="question-list"><article v-for="(q,index) in questions" :key="`${q.title}-${index}`" :class="{done:confirmed[questionKey(index)]}"><i>{{ confirmed[questionKey(index)]?'✓':index+1 }}</i><div><h4>{{ q.title }}</h4><p>{{ q.reason }}</p><small><b>AI 建议</b>{{ q.suggestion }}</small></div><button @click="toggleQuestion(index)">{{ confirmed[questionKey(index)]?'已确认':'采纳建议' }}</button></article><div v-if="!questions.length" class="empty">模型未发现需要产品确认的问题</div></div></template>
-              <template v-else><header class="case-toolbar"><div><h3>测试用例</h3><p>由当前真实业务规则和页面状态生成</p></div><span>{{ reviewSaving ? '保存中…' : `已选 ${selectedCount}/${cases.length}` }}</span></header><div class="case-table"><header><span></span><span>用例</span><span>类型</span><span>优先级</span><span>状态</span></header><label v-for="(item,index) in cases" :key="`${item.title}-${index}`"><input v-model="selectedCases[caseKey(index)]" type="checkbox" @change="saveCurrentReview"/><span><b>{{ caseCode(index) }}</b><strong>{{ item.title }}</strong></span><span>{{ item.type }}</span><i :class="item.priority.toLowerCase()">{{ item.priority }}</i><em :class="item.blockedByQuestion?'pending':'ready'">{{ item.blockedByQuestion ? '待确认' : '已就绪' }}</em></label></div><div class="automation"><div><b>✦</b><p><strong>{{ selectedCount }} 条用例已准备生成自动化任务</strong><span>Playwright 执行器将在下一轮接入。</span></p></div><button :disabled="!selectedCount" @click="toast(`已保存 ${selectedCount} 条自动化任务草稿`)">生成任务草稿</button></div></template>
+              <template v-else><header class="case-toolbar"><div><h3>测试用例</h3><p>由当前真实业务规则和页面状态生成</p></div><span>{{ reviewSaving ? '保存中…' : `已选 ${selectedCount}/${cases.length}` }}</span></header><div class="case-table"><header><span></span><span>用例</span><span>类型</span><span>优先级</span><span>状态</span></header><label v-for="(item,index) in cases" :key="`${item.title}-${index}`"><input v-model="selectedCases[caseKey(index)]" type="checkbox" @change="saveCurrentReview"/><span><b>{{ caseCode(index) }}</b><strong>{{ item.title }}</strong></span><span>{{ item.type }}</span><i :class="item.priority.toLowerCase()">{{ item.priority }}</i><em :class="item.blockedByQuestion?'pending':'ready'">{{ item.blockedByQuestion ? '待确认' : '已就绪' }}</em></label></div><div class="automation"><div><b>✦</b><p><strong>Playwright 真实执行器</strong><span v-if="latestExecution">最近执行：{{ latestExecution.status === 'passed' ? '通过' : '失败' }} · {{ latestExecution.durationMs }}ms · {{ latestExecution.steps.length }} 步</span><span v-else>尚未执行浏览器测试</span></p></div><button :disabled="executionRunning" @click="verifyPlaywright">{{ executionRunning ? '执行中…' : '验证执行器' }}</button></div></template>
             </div>
           </section>
         </section>
