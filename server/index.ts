@@ -4,10 +4,10 @@ import { createReadStream, existsSync } from 'node:fs'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { basename, resolve } from 'node:path'
 import { analyzePrd } from './model'
-import { getAnalysisById, getEnvironmentById, getLatestAnalysis, getLatestAutomationPlan, getLatestEnvironment, getLatestExecution, listAnalyses, saveAnalysis, saveAutomationPlan, saveEnvironment, saveExecution, saveReview, setEnvironmentStorageState } from './database'
+import { getAnalysisById, getAutomationPlanById, getEnvironmentById, getExecutionById, getLatestAnalysis, getLatestAutomationPlan, getLatestEnvironment, getLatestExecution, listAnalyses, listExecutions, saveAnalysis, saveAutomationPlan, saveEnvironment, saveExecution, saveReview, setEnvironmentStorageState } from './database'
 import { runAutomationPlan } from './playwright-runner'
 import { generateAutomationPlan } from './model'
-import { storageStateSchema } from '../shared/contracts'
+import { automationPlanSchema, storageStateSchema } from '../shared/contracts'
 
 const port = Number(process.env.API_PORT ?? 8787)
 const maxBodySize = 10 * 1024 * 1024
@@ -66,6 +66,32 @@ const server = createServer(async (request, response) => {
 
     if (request.method === 'GET' && request.url === '/api/executions/latest') {
       return json(response, 200, { execution: getLatestExecution() })
+    }
+
+    if (request.method === 'GET' && request.url === '/api/executions') {
+      return json(response, 200, { executions: listExecutions() })
+    }
+
+    const executionMatch = request.url?.match(/^\/api\/executions\/([a-f0-9-]+)$/i)
+    if (request.method === 'GET' && executionMatch) {
+      const execution = getExecutionById(executionMatch[1])
+      return execution ? json(response, 200, { execution }) : json(response, 404, { error: '执行记录不存在' })
+    }
+
+    const rerunMatch = request.url?.match(/^\/api\/executions\/([a-f0-9-]+)\/rerun$/i)
+    if (request.method === 'POST' && rerunMatch) {
+      const original = getExecutionById(rerunMatch[1])
+      if (!original) return json(response, 404, { error: '执行记录不存在' })
+      if (!original.plan) return json(response, 409, { error: '历史记录未保存自动化计划，无法直接重跑' })
+      const environment = original.environmentId ? getEnvironmentById(original.environmentId) : null
+      if (original.environmentId && !environment) return json(response, 409, { error: '原测试环境已不存在，无法安全重跑' })
+      const result = await runAutomationPlan(original.plan, environment?.storageStatePath)
+      saveExecution(result, {
+        analysisId: original.analysisId, automationPlanId: original.automationPlanId,
+        environmentId: original.environmentId, caseKeys: original.caseKeys, plan: original.plan, rerunOf: original.id,
+      })
+      const execution = getExecutionById(result.id)
+      return json(response, result.status === 'passed' ? 201 : 422, { execution })
     }
 
     if (request.method === 'GET' && request.url === '/api/environments/latest') return json(response, 200, { environment: getLatestEnvironment() })
@@ -133,12 +159,23 @@ const server = createServer(async (request, response) => {
 
     if (request.method === 'POST' && request.url === '/api/automation/run') {
       const body = await readJson(request)
-      const wrappedPlan = body.plan ?? body
       const environmentId = typeof body.environmentId === 'string' ? body.environmentId : undefined
+      const automationPlanId = typeof body.automationPlanId === 'string' ? body.automationPlanId : undefined
       const environment = environmentId ? getEnvironmentById(environmentId) : null
+      if (environmentId && !environment) return json(response, 404, { error: '测试环境不存在' })
+      const savedPlan = automationPlanId ? getAutomationPlanById(automationPlanId) : null
+      if (automationPlanId && !savedPlan) return json(response, 404, { error: '自动化计划不存在' })
+      const wrappedPlan = automationPlanSchema.parse(savedPlan?.plan ?? body.plan ?? body)
       const result = await runAutomationPlan(wrappedPlan, environment?.storageStatePath)
-      saveExecution(result)
-      return json(response, result.status === 'passed' ? 201 : 422, { execution: result })
+      saveExecution(result, {
+        analysisId: savedPlan?.analysisId,
+        automationPlanId: savedPlan?.id,
+        environmentId,
+        caseKeys: savedPlan?.caseKeys,
+        plan: wrappedPlan,
+      })
+      const execution = getExecutionById(result.id)
+      return json(response, result.status === 'passed' ? 201 : 422, { execution })
     }
 
     if (request.method === 'POST' && request.url === '/api/analyze') {

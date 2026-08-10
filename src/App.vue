@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import type { AnalysisSummary, ExecutionResult, PrdAnalysis, SavedAnalysis, SavedAutomationPlan, TestEnvironment } from '../shared/contracts'
+import type { AnalysisSummary, ExecutionRecord, PrdAnalysis, SavedAnalysis, SavedAutomationPlan, TestEnvironment } from '../shared/contracts'
 
 type Tab = 'overview' | 'states' | 'questions' | 'cases'
+type WorkspaceView = 'version' | 'executions'
 
 const sampleAnalysis: PrdAnalysis = {
   versionName: '0825 版本',
@@ -65,7 +66,7 @@ const notice = ref('')
 const analyzing = ref(false)
 const reviewSaving = ref(false)
 const executionRunning = ref(false)
-const latestExecution = ref<ExecutionResult | null>(null)
+const latestExecution = ref<ExecutionRecord | null>(null)
 const latestAutomationPlan = ref<SavedAutomationPlan | null>(null)
 const targetUrl = ref('')
 const environment = ref<TestEnvironment | null>(null)
@@ -73,6 +74,10 @@ const environmentName = ref('测试环境')
 const analysisHistory = ref<AnalysisSummary[]>([])
 const versionMenuOpen = ref(false)
 const switchingVersion = ref(false)
+const workspaceView = ref<WorkspaceView>('version')
+const executionHistory = ref<ExecutionRecord[]>([])
+const selectedExecutionId = ref('')
+const executionFilter = ref<'all' | 'passed' | 'failed'>('all')
 
 const analysis = computed(() => savedAnalysis.value?.result ?? sampleAnalysis)
 const requirements = computed(() => analysis.value.requirements)
@@ -87,6 +92,9 @@ const confirmedCount = computed(() => questions.value.filter((_, index) => confi
 const selectedCount = computed(() => cases.value.filter((_, index) => selectedCases.value[caseKey(index)]).length)
 const coverage = computed(() => totalCases.value ? Math.round((readyCases.value / totalCases.value) * 100) : 0)
 const sourceFileNames = computed(() => savedAnalysis.value?.fileNames?.length ? savedAnalysis.value.fileNames : [savedAnalysis.value?.fileName ?? '错题本_0825版本需求.md'])
+const filteredExecutions = computed(() => executionFilter.value === 'all' ? executionHistory.value : executionHistory.value.filter(item => item.status === executionFilter.value))
+const selectedExecution = computed(() => executionHistory.value.find(item => item.id === selectedExecutionId.value) ?? filteredExecutions.value[0] ?? null)
+const executionPassRate = computed(() => executionHistory.value.length ? Math.round(executionHistory.value.filter(item => item.status === 'passed').length / executionHistory.value.length * 100) : 0)
 
 function requirementCode(index: number) { return `REQ-${String(index + 1).padStart(3, '0')}` }
 function questionKey(index: number) { return `${activeRequirement.value}-Q-${index}` }
@@ -95,6 +103,7 @@ function caseCode(index: number) { return `TC-${String(index + 1).padStart(3, '0
 function chooseRequirement(index: number) { activeRequirement.value = index; activeTab.value = 'overview' }
 function toast(message: string) { notice.value = message; window.setTimeout(() => notice.value = '', 4500) }
 function formatVersionTime(value: string) { return new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(value)) }
+function targetHost(value: string) { try { return new URL(value).host } catch { return value } }
 
 function prepareDocumentText(content: string) {
   return content.replace(/data:image\/[^;]+;base64,[A-Za-z0-9+/=]+/g, '[图片数据已省略]')
@@ -134,7 +143,7 @@ function toggleQuestion(index: number) {
 
 async function loadSavedAnalysis() {
   try {
-    const [healthResponse, latestResponse, executionResponse, environmentResponse, historyResponse] = await Promise.all([fetch('/api/health'), fetch('/api/analyses/latest'), fetch('/api/executions/latest'), fetch('/api/environments/latest'), fetch('/api/analyses')])
+    const [healthResponse, latestResponse, executionResponse, environmentResponse, historyResponse, executionsResponse] = await Promise.all([fetch('/api/health'), fetch('/api/analyses/latest'), fetch('/api/executions/latest'), fetch('/api/environments/latest'), fetch('/api/analyses'), fetch('/api/executions')])
     if (healthResponse.ok) apiConfigured.value = Boolean((await healthResponse.json()).configured)
     if (latestResponse.ok) {
       const payload = await latestResponse.json() as { analysis: SavedAnalysis | null }
@@ -143,7 +152,7 @@ async function loadSavedAnalysis() {
         applyReview(payload.analysis)
       }
     }
-    if (executionResponse.ok) latestExecution.value = (await executionResponse.json() as { execution: ExecutionResult | null }).execution
+    if (executionResponse.ok) latestExecution.value = (await executionResponse.json() as { execution: ExecutionRecord | null }).execution
     if (environmentResponse.ok) {
       const saved = (await environmentResponse.json() as { environment: TestEnvironment | null }).environment
       if (saved) {
@@ -153,9 +162,20 @@ async function loadSavedAnalysis() {
       }
     }
     if (historyResponse.ok) analysisHistory.value = (await historyResponse.json() as { analyses: AnalysisSummary[] }).analyses
+    if (executionsResponse.ok) {
+      executionHistory.value = (await executionsResponse.json() as { executions: ExecutionRecord[] }).executions
+      selectedExecutionId.value = executionHistory.value[0]?.id ?? ''
+    }
   } catch {
     apiConfigured.value = false
   }
+}
+
+async function refreshExecutions(selectId?: string) {
+  const response = await fetch('/api/executions')
+  if (!response.ok) return
+  executionHistory.value = (await response.json() as { executions: ExecutionRecord[] }).executions
+  selectedExecutionId.value = selectId || selectedExecutionId.value || executionHistory.value[0]?.id || ''
 }
 
 async function refreshAnalysisHistory() {
@@ -205,9 +225,10 @@ async function verifyPlaywright() {
         ],
       }),
     })
-    const payload = await response.json() as { execution?: ExecutionResult; error?: string }
+    const payload = await response.json() as { execution?: ExecutionRecord; error?: string }
     if (!payload.execution) throw new Error(payload.error ?? '执行失败')
     latestExecution.value = payload.execution
+    await refreshExecutions(payload.execution.id)
     toast(`Playwright 执行${payload.execution.status === 'passed' ? '通过' : '失败'}，共 ${payload.execution.steps.length} 个步骤`)
   } catch (error) {
     toast(`Playwright 执行失败：${error instanceof Error ? error.message : '未知错误'}`)
@@ -251,13 +272,32 @@ async function runGeneratedPlan() {
   executionRunning.value = true
   notice.value = '正在启动 Chromium 执行已确认计划…'
   try {
-    const runResponse = await fetch('/api/automation/run', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ plan: latestAutomationPlan.value.plan, environmentId: environment.value?.id }) })
-    const runPayload = await runResponse.json() as { execution?: ExecutionResult; error?: string }
+    const runResponse = await fetch('/api/automation/run', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ plan: latestAutomationPlan.value.plan, automationPlanId: latestAutomationPlan.value.id, environmentId: environment.value?.id }) })
+    const runPayload = await runResponse.json() as { execution?: ExecutionRecord; error?: string }
     if (!runPayload.execution) throw new Error(runPayload.error ?? '执行失败')
     latestExecution.value = runPayload.execution
+    await refreshExecutions(runPayload.execution.id)
     toast(`AI 计划执行${runPayload.execution.status === 'passed' ? '通过' : '失败'}：${runPayload.execution.steps.length} 步`)
   } catch (error) { toast(`执行失败：${error instanceof Error ? error.message : '未知错误'}`) }
   finally { executionRunning.value = false }
+}
+
+async function rerunExecution(execution: ExecutionRecord) {
+  if (!execution.plan || executionRunning.value) return
+  executionRunning.value = true
+  notice.value = `正在重新执行「${execution.name}」…`
+  try {
+    const response = await fetch(`/api/executions/${encodeURIComponent(execution.id)}/rerun`, { method: 'POST' })
+    const payload = await response.json() as { execution?: ExecutionRecord; error?: string }
+    if (!payload.execution) throw new Error(payload.error ?? '重新执行失败')
+    latestExecution.value = payload.execution
+    await refreshExecutions(payload.execution.id)
+    toast(`重新执行${payload.execution.status === 'passed' ? '通过' : '失败'}，已生成新的执行记录`)
+  } catch (error) {
+    toast(`重新执行失败：${error instanceof Error ? error.message : '未知错误'}`)
+  } finally {
+    executionRunning.value = false
+  }
 }
 
 async function importStorageState(event: Event) {
@@ -338,14 +378,15 @@ onMounted(loadSavedAnalysis)
     <aside class="sidebar">
       <div class="brand"><span>知</span><div><strong>知测 AI</strong><small>测试工作台</small></div></div>
       <nav>
-        <button class="active"><i>版</i>版本中心</button><button><i>需</i>需求中心<em>{{ requirements.length }}</em></button><button><i>例</i>用例资产</button><button><i>执</i>执行中心</button><button><i>忆</i>质量记忆</button>
+        <button :class="{active:workspaceView==='version'}" @click="workspaceView='version'"><i>版</i>版本中心</button><button><i>需</i>需求中心<em>{{ requirements.length }}</em></button><button><i>例</i>用例资产</button><button :class="{active:workspaceView==='executions'}" @click="workspaceView='executions'"><i>执</i>执行中心<em>{{ executionHistory.length }}</em></button><button><i>忆</i>质量记忆</button>
       </nav>
       <div class="side-bottom"><div class="memory"><b :class="{offline:!apiConfigured}"></b><p><strong>{{ apiConfigured ? 'DeepSeek 已连接' : '模型服务未连接' }}</strong><small>{{ savedAnalysis ? `${savedAnalysis.model} · 已持久化` : '当前显示示例数据' }}</small></p></div><div class="user"><span>TX</span><p><strong>测试小组</strong><small>前端质量空间</small></p></div></div>
     </aside>
 
     <main>
-      <header class="topbar"><div class="version-switcher"><span>版本中心</span><b>/</b><button :disabled="switchingVersion" @click="versionMenuOpen=!versionMenuOpen"><strong>{{ analysis.versionName }}</strong><i>⌄</i></button><div v-if="versionMenuOpen" class="version-menu"><header><strong>版本记录</strong><span>{{ analysisHistory.length }} 个版本</span></header><button v-for="item in analysisHistory" :key="item.id" :class="{active:item.id===savedAnalysis?.id}" @click="switchVersion(item.id)"><i>{{ item.id===savedAnalysis?.id ? '✓' : '版' }}</i><span><strong>{{ item.productName }} · {{ item.versionName }}</strong><small>{{ formatVersionTime(item.createdAt) }} · {{ item.requirementCount }} 项需求 · {{ item.testCaseCount }} 条用例</small><em><b :style="{width:`${item.questionCount ? Math.round(item.confirmedQuestionCount/item.questionCount*100) : 100}%`}"></b></em></span></button><p v-if="!analysisHistory.length">导入第一份 PRD 后会形成版本记录</p></div></div><label :class="['import',{disabled:analyzing}]"><input :disabled="analyzing" multiple type="file" accept=".md,.markdown,.txt" @change="importPrd" />{{ analyzing ? 'AI 解析中…' : '＋ 导入需求材料' }}</label></header>
+      <header class="topbar"><div v-if="workspaceView==='version'" class="version-switcher"><span>版本中心</span><b>/</b><button :disabled="switchingVersion" @click="versionMenuOpen=!versionMenuOpen"><strong>{{ analysis.versionName }}</strong><i>⌄</i></button><div v-if="versionMenuOpen" class="version-menu"><header><strong>版本记录</strong><span>{{ analysisHistory.length }} 个版本</span></header><button v-for="item in analysisHistory" :key="item.id" :class="{active:item.id===savedAnalysis?.id}" @click="switchVersion(item.id)"><i>{{ item.id===savedAnalysis?.id ? '✓' : '版' }}</i><span><strong>{{ item.productName }} · {{ item.versionName }}</strong><small>{{ formatVersionTime(item.createdAt) }} · {{ item.requirementCount }} 项需求 · {{ item.testCaseCount }} 条用例</small><em><b :style="{width:`${item.questionCount ? Math.round(item.confirmedQuestionCount/item.questionCount*100) : 100}%`}"></b></em></span></button><p v-if="!analysisHistory.length">导入第一份 PRD 后会形成版本记录</p></div></div><div v-else><span>执行中心</span><b>/</b><strong>自动化执行记录</strong></div><label v-if="workspaceView==='version'" :class="['import',{disabled:analyzing}]"><input :disabled="analyzing" multiple type="file" accept=".md,.markdown,.txt" @change="importPrd" />{{ analyzing ? 'AI 解析中…' : '＋ 导入需求材料' }}</label><button v-else class="back-version" @click="workspaceView='version'">返回版本中心</button></header>
       <div class="workspace">
+        <template v-if="workspaceView==='version'">
         <section class="heading"><div><small><i></i>{{ savedAnalysis ? `真实解析 · ${savedAnalysis.provider}` : '示例模式 · 等待导入 PRD' }}</small><h1>{{ analysis.productName }} · {{ analysis.versionName }}</h1><p>{{ analysis.overview }}</p></div><div><button>分享评审</button><button class="primary" @click="activeTab='cases';toast('已切换到当前测试用例')">查看测试建议</button></div></section>
         <section class="metrics"><article><i class="purple">需</i><p><span>前端需求</span><strong>{{ requirements.length }}</strong><small>{{ savedAnalysis ? 'DeepSeek 已解析' : '当前为示例数据' }}</small></p></article><article><i class="amber">?</i><p><span>待确认问题</span><strong>{{ totalQuestions }}</strong><small>影响规则与用例</small></p></article><article><i class="blue">例</i><p><span>测试用例</span><strong>{{ totalCases }}</strong><small>{{ readyCases }} 条可执行</small></p></article><article><i class="green">✓</i><p><span>当前可执行率</span><strong>{{ coverage }}%</strong><small>确认后继续提升</small></p></article></section>
 
@@ -365,6 +406,17 @@ onMounted(loadSavedAnalysis)
             </div>
           </section>
         </section>
+        </template>
+        <template v-else>
+          <section class="heading execution-heading"><div><small><i></i>Playwright 真实浏览器结果</small><h1>自动化执行中心</h1><p>集中查看每次执行关联的版本、环境、步骤结果与证据文件。</p></div><div><button class="primary" @click="workspaceView='version';activeTab='cases'">发起新执行</button></div></section>
+          <section class="metrics execution-metrics"><article><i class="purple">执</i><p><span>执行总数</span><strong>{{ executionHistory.length }}</strong><small>本地持久化记录</small></p></article><article><i class="green">✓</i><p><span>通过</span><strong>{{ executionHistory.filter(item=>item.status==='passed').length }}</strong><small>浏览器执行成功</small></p></article><article><i class="amber">×</i><p><span>失败</span><strong>{{ executionHistory.filter(item=>item.status==='failed').length }}</strong><small>需要排查处理</small></p></article><article><i class="blue">率</i><p><span>通过率</span><strong>{{ executionPassRate }}%</strong><small>全部执行记录</small></p></article></section>
+          <div class="execution-filters"><button :class="{active:executionFilter==='all'}" @click="executionFilter='all'">全部 {{ executionHistory.length }}</button><button :class="{active:executionFilter==='passed'}" @click="executionFilter='passed'">已通过</button><button :class="{active:executionFilter==='failed'}" @click="executionFilter='failed'">失败</button></div>
+          <section class="execution-center">
+            <aside class="execution-list"><button v-for="item in filteredExecutions" :key="item.id" :class="{active:selectedExecution?.id===item.id}" @click="selectedExecutionId=item.id"><i :class="item.status">{{ item.status==='passed'?'✓':'×' }}</i><span><strong>{{ item.name }}</strong><small>{{ item.productName ? `${item.productName} · ${item.versionName}` : '未关联版本的执行' }}</small><em>{{ formatVersionTime(item.startedAt) }} · {{ item.durationMs }}ms</em></span><b>{{ item.environmentName ?? targetHost(item.targetUrl) }}</b></button><div v-if="!filteredExecutions.length" class="empty">当前筛选条件下暂无执行记录</div></aside>
+            <article v-if="selectedExecution" class="execution-detail"><header><div><span :class="selectedExecution.status">{{ selectedExecution.status==='passed'?'执行通过':'执行失败' }}</span><h2>{{ selectedExecution.name }}</h2><p>{{ selectedExecution.targetUrl }}</p></div><button :disabled="executionRunning || !selectedExecution.plan" @click="rerunExecution(selectedExecution)">{{ executionRunning ? '执行中…' : selectedExecution.plan ? '重新执行' : '旧记录不可重跑' }}</button></header><div class="execution-meta"><p><span>所属版本</span><strong>{{ selectedExecution.versionName ?? '未关联' }}</strong></p><p><span>测试环境</span><strong>{{ selectedExecution.environmentName ?? '默认浏览器环境' }}</strong></p><p><span>关联用例</span><strong>{{ selectedExecution.caseKeys.length }} 条</strong></p><p><span>执行耗时</span><strong>{{ selectedExecution.durationMs }}ms</strong></p></div><div v-if="selectedExecution.rerunOf" class="rerun-note">本次为重新执行 · 来源记录 {{ selectedExecution.rerunOf.slice(0,8) }}</div><div v-if="selectedExecution.error" class="execution-error"><b>失败原因</b><code>{{ selectedExecution.error }}</code></div><section class="step-detail"><h3>步骤明细</h3><div v-for="step in selectedExecution.steps" :key="step.index"><i :class="step.status">{{ step.status==='passed'?'✓':'×' }}</i><span><strong>步骤 {{ step.index+1 }} · {{ step.action }}</strong><small v-if="step.error">{{ step.error }}</small></span><b>{{ step.durationMs }}ms</b></div></section><footer><a v-if="selectedExecution.tracePath" :href="artifactUrl(selectedExecution.tracePath)">下载 Trace</a><a v-for="shot in selectedExecution.screenshots" :key="shot" :href="artifactUrl(shot)">下载{{ shot.endsWith('failure.png') ? '失败截图' : '步骤截图' }}</a></footer></article>
+            <article v-else class="execution-detail empty">执行一次 Playwright 计划后，这里会展示详细报告。</article>
+          </section>
+        </template>
       </div>
     </main>
     <Transition name="toast"><div v-if="notice" class="toast"><b>{{ analyzing ? 'AI' : '✓' }}</b>{{ notice }}</div></Transition>

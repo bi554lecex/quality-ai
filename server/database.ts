@@ -2,7 +2,7 @@ import { mkdirSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { dirname, resolve } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import type { AnalysisSummary, AutomationPlan, ExecutionResult, PrdAnalysis, ReviewState, SavedAnalysis, SavedAutomationPlan, TestEnvironment } from '../shared/contracts'
+import type { AnalysisSummary, AutomationPlan, ExecutionRecord, ExecutionResult, PrdAnalysis, ReviewState, SavedAnalysis, SavedAutomationPlan, TestEnvironment } from '../shared/contracts'
 
 const databasePath = resolve('data/quality-ai.sqlite')
 mkdirSync(dirname(databasePath), { recursive: true })
@@ -54,6 +54,14 @@ database.exec(`
 const analysisColumns = database.prepare('PRAGMA table_info(analyses)').all() as Array<{ name: string }>
 if (!analysisColumns.some(column => column.name === 'file_names_json')) {
   database.exec("ALTER TABLE analyses ADD COLUMN file_names_json TEXT NOT NULL DEFAULT '[]'")
+}
+
+const executionColumns = database.prepare('PRAGMA table_info(executions)').all() as Array<{ name: string }>
+for (const [name, definition] of [
+  ['analysis_id', 'TEXT'], ['automation_plan_id', 'TEXT'], ['environment_id', 'TEXT'],
+  ['case_keys_json', "TEXT NOT NULL DEFAULT '[]'"], ['plan_json', 'TEXT'], ['rerun_of', 'TEXT'],
+] as const) {
+  if (!executionColumns.some(column => column.name === name)) database.exec(`ALTER TABLE executions ADD COLUMN ${name} ${definition}`)
 }
 
 export function saveAnalysis(input: {
@@ -144,14 +152,60 @@ export function saveReview(analysisId: string, review: Omit<ReviewState, 'update
   return { ...review, updatedAt }
 }
 
-export function saveExecution(result: ExecutionResult) {
-  database.prepare('INSERT INTO executions (id, name, status, result_json, created_at) VALUES (?, ?, ?, ?, ?)')
-    .run(result.id, result.name, result.status, JSON.stringify(result), result.startedAt)
+interface ExecutionContext {
+  analysisId?: string
+  automationPlanId?: string
+  environmentId?: string
+  caseKeys?: string[]
+  plan?: AutomationPlan
+  rerunOf?: string
 }
 
-export function getLatestExecution(): ExecutionResult | null {
-  const row = database.prepare('SELECT result_json FROM executions ORDER BY created_at DESC LIMIT 1').get() as { result_json: string } | undefined
-  return row ? JSON.parse(row.result_json) as ExecutionResult : null
+export function saveExecution(result: ExecutionResult, context: ExecutionContext = {}) {
+  database.prepare(`INSERT INTO executions
+    (id,name,status,result_json,created_at,analysis_id,automation_plan_id,environment_id,case_keys_json,plan_json,rerun_of)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?)`)
+    .run(result.id, result.name, result.status, JSON.stringify(result), result.startedAt, context.analysisId ?? null,
+      context.automationPlanId ?? null, context.environmentId ?? null, JSON.stringify(context.caseKeys ?? []),
+      context.plan ? JSON.stringify(context.plan) : null, context.rerunOf ?? null)
+}
+
+const executionSelect = `
+  SELECT e.*, a.result_json AS analysis_result_json, env.name AS environment_name
+  FROM executions e
+  LEFT JOIN analyses a ON a.id=e.analysis_id
+  LEFT JOIN test_environments env ON env.id=e.environment_id
+`
+
+function mapExecution(row: Record<string, string> | undefined): ExecutionRecord | null {
+  if (!row) return null
+  const result = JSON.parse(row.result_json) as ExecutionResult
+  const analysis = row.analysis_result_json ? JSON.parse(row.analysis_result_json) as PrdAnalysis : null
+  return {
+    ...result,
+    analysisId: row.analysis_id || undefined,
+    automationPlanId: row.automation_plan_id || undefined,
+    environmentId: row.environment_id || undefined,
+    caseKeys: JSON.parse(row.case_keys_json || '[]') as string[],
+    plan: row.plan_json ? JSON.parse(row.plan_json) as AutomationPlan : undefined,
+    versionName: analysis?.versionName,
+    productName: analysis?.productName,
+    environmentName: row.environment_name || undefined,
+    rerunOf: row.rerun_of || undefined,
+  }
+}
+
+export function getLatestExecution(): ExecutionRecord | null {
+  return mapExecution(database.prepare(`${executionSelect} ORDER BY e.created_at DESC LIMIT 1`).get() as Record<string, string> | undefined)
+}
+
+export function getExecutionById(id: string): ExecutionRecord | null {
+  return mapExecution(database.prepare(`${executionSelect} WHERE e.id=?`).get(id) as Record<string, string> | undefined)
+}
+
+export function listExecutions(limit = 100): ExecutionRecord[] {
+  return (database.prepare(`${executionSelect} ORDER BY e.created_at DESC LIMIT ?`).all(limit) as Array<Record<string, string>>)
+    .flatMap(row => mapExecution(row) ?? [])
 }
 
 export function saveAutomationPlan(input: SavedAutomationPlan) {
@@ -161,6 +215,12 @@ export function saveAutomationPlan(input: SavedAutomationPlan) {
 
 export function getLatestAutomationPlan(): SavedAutomationPlan | null {
   const row = database.prepare('SELECT id, analysis_id, case_keys_json, plan_json, created_at FROM automation_plans ORDER BY created_at DESC LIMIT 1').get() as Record<string, string> | undefined
+  if (!row) return null
+  return { id: row.id, analysisId: row.analysis_id, caseKeys: JSON.parse(row.case_keys_json) as string[], plan: JSON.parse(row.plan_json) as AutomationPlan, createdAt: row.created_at }
+}
+
+export function getAutomationPlanById(id: string): SavedAutomationPlan | null {
+  const row = database.prepare('SELECT id, analysis_id, case_keys_json, plan_json, created_at FROM automation_plans WHERE id=?').get(id) as Record<string, string> | undefined
   if (!row) return null
   return { id: row.id, analysisId: row.analysis_id, caseKeys: JSON.parse(row.case_keys_json) as string[], plan: JSON.parse(row.plan_json) as AutomationPlan, createdAt: row.created_at }
 }

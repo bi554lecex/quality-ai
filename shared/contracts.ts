@@ -137,3 +137,15 @@ export interface ExecutionResult {
   tracePath?: string
   error?: string
 }
+
+export interface ExecutionRecord extends ExecutionResult {
+  analysisId?: string
+  automationPlanId?: string
+  environmentId?: string
+  caseKeys: string[]
+  plan?: AutomationPlan
+  versionName?: string
+  productName?: string
+  environmentName?: string
+  rerunOf?: string
+}
