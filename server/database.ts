@@ -2,7 +2,7 @@ import { mkdirSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { dirname, resolve } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import type { AnalysisSummary, AutomationPlan, ExecutionRecord, ExecutionResult, PrdAnalysis, ReviewState, SavedAnalysis, SavedAutomationPlan, TestEnvironment } from '../shared/contracts'
+import type { AnalysisSummary, AutomationPlan, ExecutionRecord, ExecutionResult, PrdAnalysis, ReviewState, SavedAnalysis, SavedAutomationPlan, TestCaseAsset, TestEnvironment } from '../shared/contracts'
 
 const databasePath = resolve('data/quality-ai.sqlite')
 mkdirSync(dirname(databasePath), { recursive: true })
@@ -135,6 +135,46 @@ export function listAnalyses(limit = 30): AnalysisSummary[] {
       createdAt: analysis.createdAt,
     }]
   })
+}
+
+export function listTestCaseAssets(): TestCaseAsset[] {
+  const analyses = (database.prepare(`${analysisSelect} ORDER BY a.created_at DESC`).all() as Array<Record<string, string>>)
+    .flatMap(row => mapAnalysisRow(row) ?? [])
+  const executionRows = database.prepare(`SELECT analysis_id,case_keys_json,status,created_at FROM executions
+    WHERE analysis_id IS NOT NULL ORDER BY created_at DESC`).all() as Array<Record<string, string>>
+  const latestExecution = new Map<string, { status: 'passed' | 'failed'; createdAt: string }>()
+  for (const row of executionRows) {
+    for (const caseKey of JSON.parse(row.case_keys_json || '[]') as string[]) {
+      const key = `${row.analysis_id}:${caseKey}`
+      if (!latestExecution.has(key)) latestExecution.set(key, { status: row.status as 'passed' | 'failed', createdAt: row.created_at })
+    }
+  }
+  return analyses.flatMap(analysis => analysis.result.requirements.flatMap((requirement, requirementIndex) =>
+    requirement.testCases.map((testCase, caseIndex) => {
+      const caseKey = `${requirementIndex}-TC-${caseIndex}`
+      const execution = latestExecution.get(`${analysis.id}:${caseKey}`)
+      return {
+        id: `${analysis.id}:${caseKey}`,
+        analysisId: analysis.id,
+        caseKey,
+        caseCode: `TC-${String(caseIndex + 1).padStart(3, '0')}`,
+        versionName: analysis.result.versionName,
+        productName: analysis.result.productName,
+        requirementTitle: requirement.title,
+        requirementIndex,
+        title: testCase.title,
+        type: testCase.type,
+        priority: testCase.priority,
+        preconditions: testCase.preconditions,
+        steps: testCase.steps,
+        expectedResult: testCase.expectedResult,
+        blockedByQuestion: testCase.blockedByQuestion,
+        selected: analysis.review.selectedCases.includes(caseKey),
+        createdAt: analysis.createdAt,
+        lastExecutionStatus: execution?.status,
+        lastExecutedAt: execution?.createdAt,
+      }
+    })))
 }
 
 export function saveReview(analysisId: string, review: Omit<ReviewState, 'updatedAt'>): ReviewState {

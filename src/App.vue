@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import type { AnalysisSummary, ExecutionRecord, PrdAnalysis, SavedAnalysis, SavedAutomationPlan, TestEnvironment } from '../shared/contracts'
+import type { AnalysisSummary, ExecutionRecord, PrdAnalysis, SavedAnalysis, SavedAutomationPlan, TestCaseAsset, TestEnvironment } from '../shared/contracts'
 
 type Tab = 'overview' | 'states' | 'questions' | 'cases'
-type WorkspaceView = 'version' | 'executions'
+type WorkspaceView = 'version' | 'cases' | 'executions'
 
 const sampleAnalysis: PrdAnalysis = {
   versionName: '0825 版本',
@@ -78,6 +78,12 @@ const workspaceView = ref<WorkspaceView>('version')
 const executionHistory = ref<ExecutionRecord[]>([])
 const selectedExecutionId = ref('')
 const executionFilter = ref<'all' | 'passed' | 'failed'>('all')
+const caseAssets = ref<TestCaseAsset[]>([])
+const selectedAssetId = ref('')
+const caseSearch = ref('')
+const caseVersionFilter = ref('all')
+const casePriorityFilter = ref('all')
+const caseTypeFilter = ref('all')
 
 const analysis = computed(() => savedAnalysis.value?.result ?? sampleAnalysis)
 const requirements = computed(() => analysis.value.requirements)
@@ -95,6 +101,19 @@ const sourceFileNames = computed(() => savedAnalysis.value?.fileNames?.length ? 
 const filteredExecutions = computed(() => executionFilter.value === 'all' ? executionHistory.value : executionHistory.value.filter(item => item.status === executionFilter.value))
 const selectedExecution = computed(() => executionHistory.value.find(item => item.id === selectedExecutionId.value) ?? filteredExecutions.value[0] ?? null)
 const executionPassRate = computed(() => executionHistory.value.length ? Math.round(executionHistory.value.filter(item => item.status === 'passed').length / executionHistory.value.length * 100) : 0)
+const caseVersions = computed(() => Array.from(new Set(caseAssets.value.map(item => item.analysisId))).map(id => {
+  const asset = caseAssets.value.find(item => item.analysisId === id)
+  return { id, name: asset?.versionName ?? id, createdAt: asset?.createdAt ?? '' }
+}))
+const caseTypes = computed(() => Array.from(new Set(caseAssets.value.map(item => item.type))))
+const filteredCaseAssets = computed(() => caseAssets.value.filter(item => {
+  const keyword = caseSearch.value.trim().toLowerCase()
+  return (!keyword || `${item.title} ${item.requirementTitle} ${item.expectedResult}`.toLowerCase().includes(keyword))
+    && (caseVersionFilter.value === 'all' || item.analysisId === caseVersionFilter.value)
+    && (casePriorityFilter.value === 'all' || item.priority === casePriorityFilter.value)
+    && (caseTypeFilter.value === 'all' || item.type === caseTypeFilter.value)
+}))
+const selectedAsset = computed(() => caseAssets.value.find(item => item.id === selectedAssetId.value) ?? filteredCaseAssets.value[0] ?? null)
 
 function requirementCode(index: number) { return `REQ-${String(index + 1).padStart(3, '0')}` }
 function questionKey(index: number) { return `${activeRequirement.value}-Q-${index}` }
@@ -129,6 +148,7 @@ async function saveCurrentReview() {
     const payload = await response.json() as { review?: SavedAnalysis['review']; error?: string }
     if (!response.ok || !payload.review) throw new Error(payload.error ?? '保存失败')
     savedAnalysis.value.review = payload.review
+    void refreshCaseAssets()
   } catch (error) {
     toast(`评审状态保存失败：${error instanceof Error ? error.message : '未知错误'}`)
   } finally {
@@ -143,7 +163,7 @@ function toggleQuestion(index: number) {
 
 async function loadSavedAnalysis() {
   try {
-    const [healthResponse, latestResponse, executionResponse, environmentResponse, historyResponse, executionsResponse] = await Promise.all([fetch('/api/health'), fetch('/api/analyses/latest'), fetch('/api/executions/latest'), fetch('/api/environments/latest'), fetch('/api/analyses'), fetch('/api/executions')])
+    const [healthResponse, latestResponse, executionResponse, environmentResponse, historyResponse, executionsResponse, casesResponse] = await Promise.all([fetch('/api/health'), fetch('/api/analyses/latest'), fetch('/api/executions/latest'), fetch('/api/environments/latest'), fetch('/api/analyses'), fetch('/api/executions'), fetch('/api/test-cases')])
     if (healthResponse.ok) apiConfigured.value = Boolean((await healthResponse.json()).configured)
     if (latestResponse.ok) {
       const payload = await latestResponse.json() as { analysis: SavedAnalysis | null }
@@ -166,9 +186,20 @@ async function loadSavedAnalysis() {
       executionHistory.value = (await executionsResponse.json() as { executions: ExecutionRecord[] }).executions
       selectedExecutionId.value = executionHistory.value[0]?.id ?? ''
     }
+    if (casesResponse.ok) {
+      caseAssets.value = (await casesResponse.json() as { testCases: TestCaseAsset[] }).testCases
+      selectedAssetId.value = caseAssets.value[0]?.id ?? ''
+    }
   } catch {
     apiConfigured.value = false
   }
+}
+
+async function refreshCaseAssets() {
+  const response = await fetch('/api/test-cases')
+  if (!response.ok) return
+  caseAssets.value = (await response.json() as { testCases: TestCaseAsset[] }).testCases
+  selectedAssetId.value = selectedAssetId.value || caseAssets.value[0]?.id || ''
 }
 
 async function refreshExecutions(selectId?: string) {
@@ -176,6 +207,7 @@ async function refreshExecutions(selectId?: string) {
   if (!response.ok) return
   executionHistory.value = (await response.json() as { executions: ExecutionRecord[] }).executions
   selectedExecutionId.value = selectId || selectedExecutionId.value || executionHistory.value[0]?.id || ''
+  await refreshCaseAssets()
 }
 
 async function refreshAnalysisHistory() {
@@ -205,6 +237,14 @@ async function switchVersion(id: string) {
   } finally {
     switchingVersion.value = false
   }
+}
+
+async function openAssetInVersion(asset: TestCaseAsset) {
+  await switchVersion(asset.analysisId)
+  activeRequirement.value = asset.requirementIndex
+  activeTab.value = 'cases'
+  workspaceView.value = 'version'
+  toast(`已定位到 ${asset.caseCode} · ${asset.title}`)
 }
 
 async function verifyPlaywright() {
@@ -361,6 +401,7 @@ async function importPrd(event: Event) {
     confirmed.value = {}
     selectedCases.value = {}
     await refreshAnalysisHistory()
+    await refreshCaseAssets()
     toast(`DeepSeek 已联合解析 ${files.length} 份材料，提取 ${payload.analysis.result.requirements.length} 个需求`)
   } catch (error) {
     toast(`解析失败：${error instanceof Error ? error.message : '未知错误'}`)
@@ -378,13 +419,13 @@ onMounted(loadSavedAnalysis)
     <aside class="sidebar">
       <div class="brand"><span>知</span><div><strong>知测 AI</strong><small>测试工作台</small></div></div>
       <nav>
-        <button :class="{active:workspaceView==='version'}" @click="workspaceView='version'"><i>版</i>版本中心</button><button><i>需</i>需求中心<em>{{ requirements.length }}</em></button><button><i>例</i>用例资产</button><button :class="{active:workspaceView==='executions'}" @click="workspaceView='executions'"><i>执</i>执行中心<em>{{ executionHistory.length }}</em></button><button><i>忆</i>质量记忆</button>
+        <button :class="{active:workspaceView==='version'}" @click="workspaceView='version'"><i>版</i>版本中心</button><button><i>需</i>需求中心<em>{{ requirements.length }}</em></button><button :class="{active:workspaceView==='cases'}" @click="workspaceView='cases'"><i>例</i>用例资产<em>{{ caseAssets.length }}</em></button><button :class="{active:workspaceView==='executions'}" @click="workspaceView='executions'"><i>执</i>执行中心<em>{{ executionHistory.length }}</em></button><button><i>忆</i>质量记忆</button>
       </nav>
       <div class="side-bottom"><div class="memory"><b :class="{offline:!apiConfigured}"></b><p><strong>{{ apiConfigured ? 'DeepSeek 已连接' : '模型服务未连接' }}</strong><small>{{ savedAnalysis ? `${savedAnalysis.model} · 已持久化` : '当前显示示例数据' }}</small></p></div><div class="user"><span>TX</span><p><strong>测试小组</strong><small>前端质量空间</small></p></div></div>
     </aside>
 
     <main>
-      <header class="topbar"><div v-if="workspaceView==='version'" class="version-switcher"><span>版本中心</span><b>/</b><button :disabled="switchingVersion" @click="versionMenuOpen=!versionMenuOpen"><strong>{{ analysis.versionName }}</strong><i>⌄</i></button><div v-if="versionMenuOpen" class="version-menu"><header><strong>版本记录</strong><span>{{ analysisHistory.length }} 个版本</span></header><button v-for="item in analysisHistory" :key="item.id" :class="{active:item.id===savedAnalysis?.id}" @click="switchVersion(item.id)"><i>{{ item.id===savedAnalysis?.id ? '✓' : '版' }}</i><span><strong>{{ item.productName }} · {{ item.versionName }}</strong><small>{{ formatVersionTime(item.createdAt) }} · {{ item.requirementCount }} 项需求 · {{ item.testCaseCount }} 条用例</small><em><b :style="{width:`${item.questionCount ? Math.round(item.confirmedQuestionCount/item.questionCount*100) : 100}%`}"></b></em></span></button><p v-if="!analysisHistory.length">导入第一份 PRD 后会形成版本记录</p></div></div><div v-else><span>执行中心</span><b>/</b><strong>自动化执行记录</strong></div><label v-if="workspaceView==='version'" :class="['import',{disabled:analyzing}]"><input :disabled="analyzing" multiple type="file" accept=".md,.markdown,.txt" @change="importPrd" />{{ analyzing ? 'AI 解析中…' : '＋ 导入需求材料' }}</label><button v-else class="back-version" @click="workspaceView='version'">返回版本中心</button></header>
+      <header class="topbar"><div v-if="workspaceView==='version'" class="version-switcher"><span>版本中心</span><b>/</b><button :disabled="switchingVersion" @click="versionMenuOpen=!versionMenuOpen"><strong>{{ analysis.versionName }}</strong><i>⌄</i></button><div v-if="versionMenuOpen" class="version-menu"><header><strong>版本记录</strong><span>{{ analysisHistory.length }} 个版本</span></header><button v-for="item in analysisHistory" :key="item.id" :class="{active:item.id===savedAnalysis?.id}" @click="switchVersion(item.id)"><i>{{ item.id===savedAnalysis?.id ? '✓' : '版' }}</i><span><strong>{{ item.productName }} · {{ item.versionName }}</strong><small>{{ formatVersionTime(item.createdAt) }} · {{ item.requirementCount }} 项需求 · {{ item.testCaseCount }} 条用例</small><em><b :style="{width:`${item.questionCount ? Math.round(item.confirmedQuestionCount/item.questionCount*100) : 100}%`}"></b></em></span></button><p v-if="!analysisHistory.length">导入第一份 PRD 后会形成版本记录</p></div></div><div v-else><span>{{ workspaceView==='cases' ? '用例资产' : '执行中心' }}</span><b>/</b><strong>{{ workspaceView==='cases' ? '跨版本测试用例' : '自动化执行记录' }}</strong></div><label v-if="workspaceView==='version'" :class="['import',{disabled:analyzing}]"><input :disabled="analyzing" multiple type="file" accept=".md,.markdown,.txt" @change="importPrd" />{{ analyzing ? 'AI 解析中…' : '＋ 导入需求材料' }}</label><button v-else class="back-version" @click="workspaceView='version'">返回版本中心</button></header>
       <div class="workspace">
         <template v-if="workspaceView==='version'">
         <section class="heading"><div><small><i></i>{{ savedAnalysis ? `真实解析 · ${savedAnalysis.provider}` : '示例模式 · 等待导入 PRD' }}</small><h1>{{ analysis.productName }} · {{ analysis.versionName }}</h1><p>{{ analysis.overview }}</p></div><div><button>分享评审</button><button class="primary" @click="activeTab='cases';toast('已切换到当前测试用例')">查看测试建议</button></div></section>
@@ -407,7 +448,7 @@ onMounted(loadSavedAnalysis)
           </section>
         </section>
         </template>
-        <template v-else>
+        <template v-else-if="workspaceView==='executions'">
           <section class="heading execution-heading"><div><small><i></i>Playwright 真实浏览器结果</small><h1>自动化执行中心</h1><p>集中查看每次执行关联的版本、环境、步骤结果与证据文件。</p></div><div><button class="primary" @click="workspaceView='version';activeTab='cases'">发起新执行</button></div></section>
           <section class="metrics execution-metrics"><article><i class="purple">执</i><p><span>执行总数</span><strong>{{ executionHistory.length }}</strong><small>本地持久化记录</small></p></article><article><i class="green">✓</i><p><span>通过</span><strong>{{ executionHistory.filter(item=>item.status==='passed').length }}</strong><small>浏览器执行成功</small></p></article><article><i class="amber">×</i><p><span>失败</span><strong>{{ executionHistory.filter(item=>item.status==='failed').length }}</strong><small>需要排查处理</small></p></article><article><i class="blue">率</i><p><span>通过率</span><strong>{{ executionPassRate }}%</strong><small>全部执行记录</small></p></article></section>
           <div class="execution-filters"><button :class="{active:executionFilter==='all'}" @click="executionFilter='all'">全部 {{ executionHistory.length }}</button><button :class="{active:executionFilter==='passed'}" @click="executionFilter='passed'">已通过</button><button :class="{active:executionFilter==='failed'}" @click="executionFilter='failed'">失败</button></div>
@@ -415,6 +456,16 @@ onMounted(loadSavedAnalysis)
             <aside class="execution-list"><button v-for="item in filteredExecutions" :key="item.id" :class="{active:selectedExecution?.id===item.id}" @click="selectedExecutionId=item.id"><i :class="item.status">{{ item.status==='passed'?'✓':'×' }}</i><span><strong>{{ item.name }}</strong><small>{{ item.productName ? `${item.productName} · ${item.versionName}` : '未关联版本的执行' }}</small><em>{{ formatVersionTime(item.startedAt) }} · {{ item.durationMs }}ms</em></span><b>{{ item.environmentName ?? targetHost(item.targetUrl) }}</b></button><div v-if="!filteredExecutions.length" class="empty">当前筛选条件下暂无执行记录</div></aside>
             <article v-if="selectedExecution" class="execution-detail"><header><div><span :class="selectedExecution.status">{{ selectedExecution.status==='passed'?'执行通过':'执行失败' }}</span><h2>{{ selectedExecution.name }}</h2><p>{{ selectedExecution.targetUrl }}</p></div><button :disabled="executionRunning || !selectedExecution.plan" @click="rerunExecution(selectedExecution)">{{ executionRunning ? '执行中…' : selectedExecution.plan ? '重新执行' : '旧记录不可重跑' }}</button></header><div class="execution-meta"><p><span>所属版本</span><strong>{{ selectedExecution.versionName ?? '未关联' }}</strong></p><p><span>测试环境</span><strong>{{ selectedExecution.environmentName ?? '默认浏览器环境' }}</strong></p><p><span>关联用例</span><strong>{{ selectedExecution.caseKeys.length }} 条</strong></p><p><span>执行耗时</span><strong>{{ selectedExecution.durationMs }}ms</strong></p></div><div v-if="selectedExecution.rerunOf" class="rerun-note">本次为重新执行 · 来源记录 {{ selectedExecution.rerunOf.slice(0,8) }}</div><div v-if="selectedExecution.error" class="execution-error"><b>失败原因</b><code>{{ selectedExecution.error }}</code></div><section class="step-detail"><h3>步骤明细</h3><div v-for="step in selectedExecution.steps" :key="step.index"><i :class="step.status">{{ step.status==='passed'?'✓':'×' }}</i><span><strong>步骤 {{ step.index+1 }} · {{ step.action }}</strong><small v-if="step.error">{{ step.error }}</small></span><b>{{ step.durationMs }}ms</b></div></section><footer><a v-if="selectedExecution.tracePath" :href="artifactUrl(selectedExecution.tracePath)">下载 Trace</a><a v-for="shot in selectedExecution.screenshots" :key="shot" :href="artifactUrl(shot)">下载{{ shot.endsWith('failure.png') ? '失败截图' : '步骤截图' }}</a></footer></article>
             <article v-else class="execution-detail empty">执行一次 Playwright 计划后，这里会展示详细报告。</article>
+          </section>
+        </template>
+        <template v-else>
+          <section class="heading asset-heading"><div><small><i></i>跨版本测试资产</small><h1>用例资产中心</h1><p>统一管理 AI 从各版本 PRD 中生成的测试用例，并追踪评审与执行状态。</p></div><div><button class="primary" @click="workspaceView='version';activeTab='cases'">生成新用例</button></div></section>
+          <section class="metrics asset-metrics"><article><i class="purple">例</i><p><span>用例总数</span><strong>{{ caseAssets.length }}</strong><small>{{ caseVersions.length }} 个版本</small></p></article><article><i class="amber">P0</i><p><span>核心用例</span><strong>{{ caseAssets.filter(item=>item.priority==='P0').length }}</strong><small>优先保障主链路</small></p></article><article><i class="green">✓</i><p><span>可执行</span><strong>{{ caseAssets.filter(item=>!item.blockedByQuestion).length }}</strong><small>无待确认阻塞</small></p></article><article><i class="blue">执</i><p><span>已有结果</span><strong>{{ caseAssets.filter(item=>item.lastExecutionStatus).length }}</strong><small>关联真实执行</small></p></article></section>
+          <div class="asset-filters"><input v-model="caseSearch" placeholder="搜索用例、需求或预期结果"/><select v-model="caseVersionFilter"><option value="all">全部版本</option><option v-for="item in caseVersions" :key="item.id" :value="item.id">{{ item.name }} · {{ formatVersionTime(item.createdAt) }}</option></select><select v-model="casePriorityFilter"><option value="all">全部优先级</option><option value="P0">P0</option><option value="P1">P1</option><option value="P2">P2</option></select><select v-model="caseTypeFilter"><option value="all">全部类型</option><option v-for="type in caseTypes" :key="type" :value="type">{{ type }}</option></select><span>{{ filteredCaseAssets.length }} 条结果</span></div>
+          <section class="asset-center">
+            <aside class="asset-list"><button v-for="item in filteredCaseAssets" :key="item.id" :class="{active:selectedAsset?.id===item.id}" @click="selectedAssetId=item.id"><span><b>{{ item.caseCode }}</b><i :class="item.priority.toLowerCase()">{{ item.priority }}</i><em>{{ item.type }}</em></span><strong>{{ item.title }}</strong><small>{{ item.requirementTitle }}</small><footer><span>{{ item.versionName }}</span><b :class="item.lastExecutionStatus ?? (item.blockedByQuestion?'blocked':'ready')">{{ item.lastExecutionStatus==='passed'?'已通过':item.lastExecutionStatus==='failed'?'失败':item.blockedByQuestion?'待确认':'待执行' }}</b></footer></button><div v-if="!filteredCaseAssets.length" class="empty">没有匹配的测试用例</div></aside>
+            <article v-if="selectedAsset" class="asset-detail"><header><div><span><b>{{ selectedAsset.caseCode }}</b><i :class="selectedAsset.priority.toLowerCase()">{{ selectedAsset.priority }}</i><em>{{ selectedAsset.type }}</em></span><h2>{{ selectedAsset.title }}</h2><p>{{ selectedAsset.productName }} · {{ selectedAsset.versionName }}</p></div><button @click="openAssetInVersion(selectedAsset)">在版本中查看</button></header><div class="asset-source"><p><span>来源需求</span><strong>{{ selectedAsset.requirementTitle }}</strong></p><p><span>评审状态</span><strong>{{ selectedAsset.selected ? '已选择执行' : selectedAsset.blockedByQuestion ? '被待确认问题阻塞' : '已就绪' }}</strong></p><p><span>最近执行</span><strong>{{ selectedAsset.lastExecutionStatus==='passed'?'通过':selectedAsset.lastExecutionStatus==='failed'?'失败':'暂无记录' }}</strong></p></div><section><h3>前置条件</h3><ul><li v-for="item in selectedAsset.preconditions" :key="item">{{ item }}</li><li v-if="!selectedAsset.preconditions.length">无特殊前置条件</li></ul></section><section><h3>测试步骤</h3><ol><li v-for="(step,index) in selectedAsset.steps" :key="`${step}-${index}`"><b>{{ index+1 }}</b><span>{{ step }}</span></li></ol></section><section class="asset-expected"><h3>预期结果</h3><p>{{ selectedAsset.expectedResult }}</p></section></article>
+            <article v-else class="asset-detail empty">请选择一条测试用例查看详情</article>
           </section>
         </template>
       </div>

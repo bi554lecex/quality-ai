@@ -68,6 +68,28 @@ export interface AnalysisSummary {
   createdAt: string
 }
 
+export interface TestCaseAsset {
+  id: string
+  analysisId: string
+  caseKey: string
+  caseCode: string
+  versionName: string
+  productName: string
+  requirementTitle: string
+  requirementIndex: number
+  title: string
+  type: PrdAnalysis['requirements'][number]['testCases'][number]['type']
+  priority: PrdAnalysis['requirements'][number]['testCases'][number]['priority']
+  preconditions: string[]
+  steps: string[]
+  expectedResult: string
+  blockedByQuestion: boolean
+  selected: boolean
+  createdAt: string
+  lastExecutionStatus?: 'passed' | 'failed'
+  lastExecutedAt?: string
+}
+
 export interface ReviewState {
   confirmedQuestions: string[]
   selectedCases: string[]

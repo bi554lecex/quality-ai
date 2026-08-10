@@ -4,7 +4,7 @@ import { createReadStream, existsSync } from 'node:fs'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { basename, resolve } from 'node:path'
 import { analyzePrd } from './model'
-import { getAnalysisById, getAutomationPlanById, getEnvironmentById, getExecutionById, getLatestAnalysis, getLatestAutomationPlan, getLatestEnvironment, getLatestExecution, listAnalyses, listExecutions, saveAnalysis, saveAutomationPlan, saveEnvironment, saveExecution, saveReview, setEnvironmentStorageState } from './database'
+import { getAnalysisById, getAutomationPlanById, getEnvironmentById, getExecutionById, getLatestAnalysis, getLatestAutomationPlan, getLatestEnvironment, getLatestExecution, listAnalyses, listExecutions, listTestCaseAssets, saveAnalysis, saveAutomationPlan, saveEnvironment, saveExecution, saveReview, setEnvironmentStorageState } from './database'
 import { runAutomationPlan } from './playwright-runner'
 import { generateAutomationPlan } from './model'
 import { automationPlanSchema, storageStateSchema } from '../shared/contracts'
@@ -56,6 +56,10 @@ const server = createServer(async (request, response) => {
 
     if (request.method === 'GET' && request.url === '/api/analyses') {
       return json(response, 200, { analyses: listAnalyses() })
+    }
+
+    if (request.method === 'GET' && request.url === '/api/test-cases') {
+      return json(response, 200, { testCases: listTestCaseAssets() })
     }
 
     const analysisMatch = request.url?.match(/^\/api\/analyses\/([a-f0-9-]+)$/i)
