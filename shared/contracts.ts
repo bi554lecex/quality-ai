@@ -200,3 +200,76 @@ export const pageSnapshotSchema = z.object({
 
 export type SemanticElement = z.infer<typeof semanticElementSchema>
 export type PageSnapshot = z.infer<typeof pageSnapshotSchema>
+
+export const agentTestGoalSchema = z.object({
+  name: z.string().min(1),
+  targetUrl: z.string().url(),
+  objective: z.string().min(1),
+  requiredAssertions: z.array(z.object({
+    id: z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/),
+    description: z.string().min(1),
+  })).min(1).max(20),
+})
+
+const elementActionBase = {
+  elementRef: z.string().regex(/^e\d+$/),
+}
+
+export const agentActionSchema = z.discriminatedUnion('action', [
+  z.object({ action: z.literal('goto'), path: z.string().min(1) }),
+  z.object({ action: z.literal('click'), ...elementActionBase }),
+  z.object({ action: z.literal('fill'), ...elementActionBase, value: z.string() }),
+  z.object({ action: z.literal('selectOption'), ...elementActionBase, value: z.string() }),
+  z.object({ action: z.literal('check'), ...elementActionBase }),
+  z.object({ action: z.literal('uncheck'), ...elementActionBase }),
+  z.object({ action: z.literal('expectVisible'), ...elementActionBase, assertionId: z.string().min(1) }),
+  z.object({ action: z.literal('expectValue'), ...elementActionBase, value: z.string(), assertionId: z.string().min(1) }),
+  z.object({ action: z.literal('expectText'), text: z.string().min(1), assertionId: z.string().min(1) }),
+  z.object({ action: z.literal('waitFor'), durationMs: z.number().int().min(100).max(5_000) }),
+  z.object({ action: z.literal('screenshot'), name: z.string().min(1) }),
+])
+
+export const projectContextRequestSchema = z.discriminatedUnion('operation', [
+  z.object({ operation: z.literal('resolve_route'), url: z.string().url() }),
+  z.object({
+    operation: z.literal('search_source'),
+    query: z.string().min(2),
+    scopes: z.array(z.enum(['route', 'page', 'component', 'api'])).optional(),
+  }),
+  z.object({
+    operation: z.literal('inspect_files'),
+    paths: z.array(z.string().min(1)).min(1).max(5),
+  }),
+])
+
+export const agentDecisionSchema = z.discriminatedUnion('type', [
+  z.object({
+    type: z.literal('action'),
+    snapshotId: z.string().uuid(),
+    action: agentActionSchema,
+    reason: z.string().min(1),
+  }),
+  z.object({
+    type: z.literal('need_project_context'),
+    request: projectContextRequestSchema,
+    reason: z.string().min(1),
+  }),
+  z.object({ type: z.literal('finish'), summary: z.string().min(1) }),
+  z.object({ type: z.literal('blocked'), reason: z.string().min(1) }),
+])
+
+export const toolResultSchema = z.object({
+  ok: z.boolean(),
+  code: z.string().min(1),
+  retryable: z.boolean(),
+  message: z.string(),
+  durationMs: z.number().int().nonnegative(),
+  pageChanged: z.boolean(),
+  screenshotPath: z.string().optional(),
+})
+
+export type AgentTestGoal = z.infer<typeof agentTestGoalSchema>
+export type AgentAction = z.infer<typeof agentActionSchema>
+export type AgentDecision = z.infer<typeof agentDecisionSchema>
+export type ProjectContextRequest = z.infer<typeof projectContextRequestSchema>
+export type ToolResult = z.infer<typeof toolResultSchema>

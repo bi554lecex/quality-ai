@@ -1,0 +1,154 @@
+import {
+  agentDecisionSchema,
+  type AgentDecision,
+  type AgentTestGoal,
+  type PageSnapshot,
+  type ToolResult,
+} from '../shared/contracts'
+import type { ProjectKnowledgeProvider } from './project-knowledge/types'
+import type { PageObserver } from './page-observer'
+import type { SingleActionExecutor } from './single-action-executor'
+import { TestPolicy, type AgentRuntimeState } from './test-policy'
+
+export interface AgentTrajectoryItem {
+  iteration: number
+  snapshotId: string
+  decision: AgentDecision
+  result?: ToolResult
+  projectContext?: unknown
+}
+
+export interface AgentDecisionInput {
+  goal: AgentTestGoal
+  snapshot: PageSnapshot
+  trajectory: AgentTrajectoryItem[]
+  projectContexts: unknown[]
+}
+
+export interface AgentDecisionProvider {
+  decide(input: AgentDecisionInput): Promise<AgentDecision>
+}
+
+export interface TestAgentResult {
+  status: 'passed' | 'failed' | 'blocked'
+  summary: string
+  executedSteps: number
+  passedAssertions: string[]
+  trajectory: AgentTrajectoryItem[]
+  screenshots: string[]
+}
+
+interface TestAgentOptions {
+  policy?: TestPolicy
+  projectProvider?: ProjectKnowledgeProvider
+}
+
+function isAssertionAction(action: AgentDecision & { type: 'action' }) {
+  return 'assertionId' in action.action ? action.action.assertionId : undefined
+}
+
+export class TestAgent {
+  private readonly policy: TestPolicy
+
+  constructor(
+    private readonly goal: AgentTestGoal,
+    private readonly observer: PageObserver,
+    private readonly executor: SingleActionExecutor,
+    private readonly decisionProvider: AgentDecisionProvider,
+    private readonly options: TestAgentOptions = {},
+  ) {
+    this.policy = options.policy ?? new TestPolicy(goal)
+  }
+
+  async run(page: Parameters<PageObserver['observe']>[0]): Promise<TestAgentResult> {
+    const state: AgentRuntimeState = {
+      startedAt: Date.now(),
+      executedSteps: 0,
+      projectContextRequests: 0,
+      passedAssertions: new Set(),
+      recentActionFingerprints: [],
+    }
+    const trajectory: AgentTrajectoryItem[] = []
+    const projectContexts: unknown[] = []
+    const screenshots: string[] = []
+    let snapshot = await this.observer.observe(page)
+    const maxIterations = this.policy.maxSteps + 5
+
+    for (let iteration = 1; iteration <= maxIterations; iteration += 1) {
+      let decision: AgentDecision
+      try {
+        decision = agentDecisionSchema.parse(await this.decisionProvider.decide({
+          goal: this.goal,
+          snapshot,
+          trajectory,
+          projectContexts,
+        }))
+      } catch (error) {
+        return this.result('failed', `Agent 决策无效：${error instanceof Error ? error.message : String(error)}`, state, trajectory, screenshots)
+      }
+      try {
+        this.policy.validate(decision, snapshot, state)
+      } catch (error) {
+        return this.result('failed', error instanceof Error ? error.message : String(error), state, trajectory, screenshots)
+      }
+
+      if (decision.type === 'finish') return this.result('passed', decision.summary, state, trajectory, screenshots)
+      if (decision.type === 'blocked') return this.result('blocked', decision.reason, state, trajectory, screenshots)
+
+      if (decision.type === 'need_project_context') {
+        if (!this.options.projectProvider) {
+          return this.result('blocked', '当前测试没有连接项目源码 Provider', state, trajectory, screenshots)
+        }
+        let projectContext: unknown
+        try {
+          projectContext = await this.resolveProjectContext(decision)
+        } catch (error) {
+          return this.result('blocked', `项目源码上下文获取失败：${error instanceof Error ? error.message : String(error)}`, state, trajectory, screenshots)
+        }
+        state.projectContextRequests += 1
+        projectContexts.push(projectContext)
+        trajectory.push({ iteration, snapshotId: snapshot.snapshotId, decision, projectContext })
+        continue
+      }
+
+      const result = await this.executor.execute(decision.snapshotId, decision.action)
+      state.executedSteps += 1
+      const fingerprint = JSON.stringify(decision.action)
+      state.recentActionFingerprints = [...state.recentActionFingerprints, fingerprint].slice(-6)
+      const assertionId = isAssertionAction(decision)
+      if (result.ok && assertionId) state.passedAssertions.add(assertionId)
+      if (result.screenshotPath) screenshots.push(result.screenshotPath)
+      trajectory.push({ iteration, snapshotId: snapshot.snapshotId, decision, result })
+      if (!result.ok) return this.result('failed', result.message, state, trajectory, screenshots)
+      snapshot = await this.observer.observe(page)
+    }
+
+    return this.result('failed', 'Agent 决策轮次超过预算', state, trajectory, screenshots)
+  }
+
+  private async resolveProjectContext(decision: AgentDecision & { type: 'need_project_context' }) {
+    const provider = this.options.projectProvider
+    if (!provider) throw new Error('项目源码 Provider 未配置')
+    const request = decision.request
+    if (request.operation === 'resolve_route') return provider.resolveRoute({ url: request.url })
+    if (request.operation === 'search_source') return provider.searchSource({ query: request.query, scopes: request.scopes })
+    return provider.inspectFiles({ paths: request.paths, reason: decision.reason })
+  }
+
+  private result(
+    status: TestAgentResult['status'],
+    summary: string,
+    state: AgentRuntimeState,
+    trajectory: AgentTrajectoryItem[],
+    screenshots: string[],
+  ): TestAgentResult {
+    return {
+      status,
+      summary,
+      executedSteps: state.executedSteps,
+      passedAssertions: [...state.passedAssertions],
+      trajectory,
+      screenshots,
+    }
+  }
+}

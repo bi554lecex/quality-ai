@@ -68,6 +68,7 @@ cp config/projects.example.json config/projects.local.json
 - Playwright 受控步骤 DSL、真实 Chromium 执行、截图与结果持久化
 - 语义 DOM 快照、临时 `elementRef` 注册表、弹窗/表格/页面消息提取与快照失效保护
 - `POST /api/automation/observe` 页面观察接口，可复用测试环境的 `storageState`
+- 受控单步 Agent 动作、`snapshotId`/`elementRef` 策略校验和必要断言完成门禁
 - 选中业务用例后由 DeepSeek 生成受控 DSL，并可对指定测试环境立即执行
 - 测试环境持久化与 Playwright `storageState` 登录态导入、复用
 - 登录态仅保存在 Git 忽略的 `data/auth` 目录，接口只返回是否已配置，不返回凭据或磁盘路径
