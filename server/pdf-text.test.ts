@@ -44,6 +44,27 @@ test('parses PDF and Markdown files into one model-ready document list', async (
   assert.equal(documents[1].role, 'interface')
 })
 
+test('promotes the first technical document when no explicit PRD is uploaded', async () => {
+  const pdf = createTextPdf('Technical solution: student search and save flow')
+  const documents = await parseSourceDocuments([
+    { fileName: 'student-solution.pdf', contentBase64: Buffer.from(pdf).toString('base64'), role: 'interface' },
+    { fileName: 'student-api.md', content: '# API\nPOST /students', role: 'interface' },
+  ])
+
+  assert.equal(documents[0].role, 'prd')
+  assert.equal(documents[1].role, 'interface')
+})
+
+test('keeps an explicit PRD as primary when technical documents are uploaded first', async () => {
+  const documents = await parseSourceDocuments([
+    { fileName: 'student-api.md', content: '# API\nPOST /students', role: 'interface' },
+    { fileName: 'student-prd.md', content: '# PRD\nStudent search requirement', role: 'prd' },
+  ])
+
+  assert.equal(documents[0].role, 'interface')
+  assert.equal(documents[1].role, 'prd')
+})
+
 test('rejects invalid and image-only PDF input with actionable messages', async () => {
   await assert.rejects(extractPdfText(new Uint8Array(Buffer.from('not a pdf'))), /有效的 PDF/)
   await assert.rejects(extractPdfText(createTextPdf('')), /OCR/)

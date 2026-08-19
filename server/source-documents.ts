@@ -32,9 +32,11 @@ export async function parseSourceDocuments(rawFiles: unknown[]): Promise<SourceD
     if (!content) throw new Error(`第 ${index + 1} 份材料内容为空`)
     return { fileName, content, role }
   }))
-  if (!documents.some(document => document.role === 'prd')) throw new Error('至少需要一份主 PRD')
-  if (documents.reduce((sum, document) => sum + document.content.length, 0) > maxCombinedCharacters) {
+  const normalizedDocuments = documents.some(document => document.role === 'prd')
+    ? documents
+    : documents.map((document, index) => index === 0 ? { ...document, role: 'prd' as const } : document)
+  if (normalizedDocuments.reduce((sum, document) => sum + document.content.length, 0) > maxCombinedCharacters) {
     throw new Error('需求材料正文合计超过 80 万字符，请拆分后上传')
   }
-  return documents
+  return normalizedDocuments
 }

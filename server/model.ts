@@ -3,7 +3,7 @@ import { jsonrepair } from 'jsonrepair'
 import { getModelConfig } from './model-config'
 import { ResponsesModelClient } from './model-client'
 
-const systemPrompt = `你是一名资深 B 端前端测试架构师。请阅读用户提供的 PRD，并输出严格 JSON。
+const systemPrompt = `你是一名资深 B 端前端测试架构师。请阅读用户提供的需求材料，并输出严格 JSON。
 目标不是复述文档，而是把需求转成可评审、可测试、未来可映射到 Playwright 的结构。
 必须：
 1. 按独立前端需求拆分 requirements。
@@ -49,7 +49,7 @@ export async function analyzePrd(documents: SourceDocument[]): Promise<{ result:
   const client = new ResponsesModelClient(config)
   let lastError: Error | null = null
   const documentText = documents.map(document => {
-    const roleName = document.role === 'prd' ? '主 PRD' : '补充接口/技术文档'
+    const roleName = document.role === 'prd' ? '主需求材料' : '补充接口/技术文档'
     return `【${roleName}：${document.fileName}】\n${document.content}`
   }).join('\n\n--- 文档分隔线 ---\n\n')
 
@@ -58,7 +58,7 @@ export async function analyzePrd(documents: SourceDocument[]): Promise<{ result:
       const output = await client.generateText({
         messages: [
           { role: 'system', content: systemPrompt },
-          { role: 'user', content: `以下是本版本的需求材料。主 PRD 决定业务目标；接口或技术文档只用于补充字段、枚举、接口契约和异常分支。如果材料冲突，必须生成待确认问题，不能擅自选择。\n\n${documentText}` },
+          { role: 'user', content: `以下是本版本的需求材料。标记为“主需求材料”的文档可能是 PRD、产品说明或技术方案，用于决定当前分析目标；其余接口或技术文档用于补充字段、枚举、接口契约和异常分支。如果材料冲突，必须生成待确认问题，不能擅自选择。\n\n${documentText}` },
         ],
         maxOutputTokens: 12000,
       })
