@@ -92,8 +92,14 @@ export class TestAgent {
         return this.result('failed', error instanceof Error ? error.message : String(error), state, trajectory, screenshots)
       }
 
-      if (decision.type === 'finish') return this.result('passed', decision.summary, state, trajectory, screenshots)
-      if (decision.type === 'blocked') return this.result('blocked', decision.reason, state, trajectory, screenshots)
+      if (decision.type === 'finish') {
+        trajectory.push({ iteration, snapshotId: snapshot.snapshotId, decision })
+        return this.result('passed', decision.summary, state, trajectory, screenshots)
+      }
+      if (decision.type === 'blocked') {
+        trajectory.push({ iteration, snapshotId: snapshot.snapshotId, decision })
+        return this.result('blocked', decision.reason, state, trajectory, screenshots)
+      }
 
       if (decision.type === 'need_project_context') {
         if (!this.options.projectProvider) {

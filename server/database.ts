@@ -59,7 +59,7 @@ if (!analysisColumns.some(column => column.name === 'file_names_json')) {
 const executionColumns = database.prepare('PRAGMA table_info(executions)').all() as Array<{ name: string }>
 for (const [name, definition] of [
   ['analysis_id', 'TEXT'], ['automation_plan_id', 'TEXT'], ['environment_id', 'TEXT'],
-  ['case_keys_json', "TEXT NOT NULL DEFAULT '[]'"], ['plan_json', 'TEXT'], ['rerun_of', 'TEXT'],
+  ['project_id', 'TEXT'], ['case_keys_json', "TEXT NOT NULL DEFAULT '[]'"], ['plan_json', 'TEXT'], ['rerun_of', 'TEXT'],
 ] as const) {
   if (!executionColumns.some(column => column.name === name)) database.exec(`ALTER TABLE executions ADD COLUMN ${name} ${definition}`)
 }
@@ -156,6 +156,7 @@ interface ExecutionContext {
   analysisId?: string
   automationPlanId?: string
   environmentId?: string
+  projectId?: string
   caseKeys?: string[]
   plan?: AutomationPlan
   rerunOf?: string
@@ -163,10 +164,10 @@ interface ExecutionContext {
 
 export function saveExecution(result: ExecutionResult, context: ExecutionContext = {}) {
   database.prepare(`INSERT INTO executions
-    (id,name,status,result_json,created_at,analysis_id,automation_plan_id,environment_id,case_keys_json,plan_json,rerun_of)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?)`)
+    (id,name,status,result_json,created_at,analysis_id,automation_plan_id,environment_id,project_id,case_keys_json,plan_json,rerun_of)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
     .run(result.id, result.name, result.status, JSON.stringify(result), result.startedAt, context.analysisId ?? null,
-      context.automationPlanId ?? null, context.environmentId ?? null, JSON.stringify(context.caseKeys ?? []),
+      context.automationPlanId ?? null, context.environmentId ?? null, context.projectId ?? null, JSON.stringify(context.caseKeys ?? []),
       context.plan ? JSON.stringify(context.plan) : null, context.rerunOf ?? null)
 }
 
@@ -186,6 +187,7 @@ function mapExecution(row: Record<string, string> | undefined): ExecutionRecord 
     analysisId: row.analysis_id || undefined,
     automationPlanId: row.automation_plan_id || undefined,
     environmentId: row.environment_id || undefined,
+    projectId: row.project_id || undefined,
     caseKeys: JSON.parse(row.case_keys_json || '[]') as string[],
     plan: row.plan_json ? JSON.parse(row.plan_json) as AutomationPlan : undefined,
     versionName: analysis?.versionName,

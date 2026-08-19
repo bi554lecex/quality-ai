@@ -128,7 +128,8 @@ export interface ExecutionResult {
   id: string
   name: string
   targetUrl: string
-  status: 'passed' | 'failed'
+  status: 'passed' | 'failed' | 'blocked'
+  mode?: 'plan' | 'agent'
   startedAt: string
   finishedAt: string
   durationMs: number
@@ -136,12 +137,24 @@ export interface ExecutionResult {
   screenshots: string[]
   tracePath?: string
   error?: string
+  agent?: {
+    summary: string
+    passedAssertions: string[]
+    trajectory: Array<{
+      iteration: number
+      snapshotId: string
+      decision: AgentDecision
+      result?: ToolResult
+      projectContext?: unknown
+    }>
+  }
 }
 
 export interface ExecutionRecord extends ExecutionResult {
   analysisId?: string
   automationPlanId?: string
   environmentId?: string
+  projectId?: string
   caseKeys: string[]
   plan?: AutomationPlan
   versionName?: string
@@ -211,6 +224,18 @@ export const agentTestGoalSchema = z.object({
   })).min(1).max(20),
 })
 
+export const agentRunRequestSchema = z.object({
+  analysisId: z.string().uuid(),
+  caseKeys: z.array(z.string().regex(/^\d+-TC-\d+$/)).min(1).max(20),
+  targetUrl: z.string().url(),
+  environmentId: z.string().uuid().optional(),
+  projectId: z.string().regex(/^[a-z0-9][a-z0-9-]*$/),
+}).superRefine((value, context) => {
+  if (new Set(value.caseKeys).size !== value.caseKeys.length) {
+    context.addIssue({ code: 'custom', path: ['caseKeys'], message: '测试用例不能重复' })
+  }
+})
+
 const elementActionBase = {
   elementRef: z.string().regex(/^e\d+$/),
 }
@@ -269,6 +294,7 @@ export const toolResultSchema = z.object({
 })
 
 export type AgentTestGoal = z.infer<typeof agentTestGoalSchema>
+export type AgentRunRequest = z.infer<typeof agentRunRequestSchema>
 export type AgentAction = z.infer<typeof agentActionSchema>
 export type AgentDecision = z.infer<typeof agentDecisionSchema>
 export type ProjectContextRequest = z.infer<typeof projectContextRequestSchema>

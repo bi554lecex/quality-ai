@@ -69,6 +69,7 @@ export async function runAutomationPlan(input: unknown, storageStatePath?: strin
     name: plan.name,
     targetUrl: plan.targetUrl,
     status: executionError ? 'failed' : 'passed',
+    mode: 'plan',
     startedAt: startedAt.toISOString(),
     finishedAt: finishedAt.toISOString(),
     durationMs: finishedAt.getTime() - startedAt.getTime(),

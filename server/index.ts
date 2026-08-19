@@ -7,10 +7,12 @@ import { analyzePrd } from './model'
 import { getAnalysisById, getAutomationPlanById, getEnvironmentById, getExecutionById, getLatestAnalysis, getLatestAutomationPlan, getLatestEnvironment, getLatestExecution, listAnalyses, listExecutions, saveAnalysis, saveAutomationPlan, saveEnvironment, saveExecution, saveReview, setEnvironmentStorageState } from './database'
 import { runAutomationPlan } from './playwright-runner'
 import { generateAutomationPlan } from './model'
-import { automationPlanSchema, storageStateSchema } from '../shared/contracts'
+import { agentRunRequestSchema, automationPlanSchema, storageStateSchema } from '../shared/contracts'
 import { getProjectProvider, getProjectProviderRegistry } from './project-knowledge/registry'
 import type { SourceScope } from './project-knowledge/types'
 import { inspectTargetPage } from './page-observer-runner'
+import { buildAgentTestGoal } from './agent-goal'
+import { runAgentTest } from './agent-test-runner'
 
 const port = Number(process.env.API_PORT ?? 8787)
 const maxBodySize = 10 * 1024 * 1024
@@ -173,7 +175,7 @@ const server = createServer(async (request, response) => {
     if (request.method === 'GET' && artifactMatch) {
       const executionId = artifactMatch[1]
       const fileName = basename(decodeURIComponent(artifactMatch[2]))
-      if (!/^(trace\.zip|failure\.png|\d{2}-[\w\u4e00-\u9fa5-]+\.png)$/.test(fileName)) return json(response, 400, { error: '证据文件名不合法' })
+      if (!/^(trace\.zip|failure\.png|[\w\u4e00-\u9fa5-]+\.png)$/.test(fileName)) return json(response, 400, { error: '证据文件名不合法' })
       const filePath = resolve('data/artifacts', executionId, fileName)
       if (!existsSync(filePath)) return json(response, 404, { error: '证据文件不存在' })
       response.writeHead(200, {
@@ -238,6 +240,43 @@ const server = createServer(async (request, response) => {
         environmentId,
         caseKeys: savedPlan?.caseKeys,
         plan: wrappedPlan,
+      })
+      const execution = getExecutionById(result.id)
+      return json(response, result.status === 'passed' ? 201 : 422, { execution })
+    }
+
+    if (request.method === 'POST' && request.url === '/api/automation/agent/run') {
+      const parsed = agentRunRequestSchema.safeParse(await readJson(request))
+      if (!parsed.success) return json(response, 400, { error: 'Agent 执行参数不合法', issues: parsed.error.issues })
+      const input = parsed.data
+      const analysis = getAnalysisById(input.analysisId)
+      if (!analysis) return json(response, 404, { error: '解析记录不存在' })
+      const environment = input.environmentId ? getEnvironmentById(input.environmentId) : null
+      if (input.environmentId && !environment) return json(response, 404, { error: '测试环境不存在' })
+      const target = new URL(input.targetUrl)
+      if (!['http:', 'https:'].includes(target.protocol)) return json(response, 400, { error: '测试地址只允许 HTTP 或 HTTPS' })
+      if (environment && target.origin !== new URL(environment.baseUrl).origin) {
+        return json(response, 400, { error: '测试页面与测试环境 Origin 不一致' })
+      }
+      const projectProvider = (await getProjectProviderRegistry()).get(input.projectId)
+      if (!projectProvider) return json(response, 404, { error: `项目配置不存在：${input.projectId}` })
+      const project = await projectProvider.getProjectInfo()
+      if (!project.connected) return json(response, 422, { error: `项目源码未连接：${project.error ?? input.projectId}` })
+      if (project.targetOrigins.length && !project.targetOrigins.includes(target.origin)) {
+        return json(response, 400, { error: `测试页面 Origin 未配置到项目：${target.origin}` })
+      }
+      let goal
+      try {
+        goal = buildAgentTestGoal(analysis, input.caseKeys, target.href)
+      } catch (error) {
+        return json(response, 409, { error: error instanceof Error ? error.message : '测试目标构造失败' })
+      }
+      const result = await runAgentTest(goal, environment?.storageStatePath, { projectProvider })
+      saveExecution(result, {
+        analysisId: input.analysisId,
+        environmentId: input.environmentId,
+        projectId: input.projectId,
+        caseKeys: input.caseKeys,
       })
       const execution = getExecutionById(result.id)
       return json(response, result.status === 'passed' ? 201 : 422, { execution })

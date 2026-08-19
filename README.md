@@ -73,6 +73,7 @@ cp config/projects.example.json config/projects.local.json
 - `POST /api/automation/observe` 页面观察接口，可复用测试环境的 `storageState`
 - 受控单步 Agent 动作、`snapshotId`/`elementRef` 策略校验和必要断言完成门禁
 - Responses 单步决策 Provider，使用紧凑上下文和 AgentDecision Schema 校验，格式错误时按校验反馈修复
+- `POST /api/automation/agent/run` 源码增强执行闭环：真实页面观察、公司模型单步决策、受控动作、按需源码读取、DOM 回验与轨迹持久化
 - 选中业务用例后由公司模型生成受控 DSL，并可对指定测试环境立即执行
 - 测试环境持久化与 Playwright `storageState` 登录态导入、复用
 - 登录态仅保存在 Git 忽略的 `data/auth` 目录，接口只返回是否已配置，不返回凭据或磁盘路径
