@@ -39,3 +39,7 @@ yarn-error.log*
 /outputs/
 /work/
 /data/
+
+# Local source projects used by ProjectKnowledgeProvider
+/targets/*
+/config/projects.local.json

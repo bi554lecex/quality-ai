@@ -27,6 +27,33 @@ npm run build
 npm run start
 ```
 
+## 连接本地被测项目
+
+源码辅助是可选能力。`quality-ai` 没有连接源码时仍可进行黑盒测试；连接后，测试 Agent 可以在 DOM 信息不足时按 URL 查询路由并读取有限的页面、组件或 API 源码。
+
+先创建仅供本机使用的软链：
+
+```bash
+mkdir -p targets
+ln -s /path/to/lvworkbench targets/lvworkbench
+```
+
+然后复制配置示例并按实际被测子项目修改：
+
+```bash
+cp config/projects.example.json config/projects.local.json
+```
+
+`targets/*` 和 `config/projects.local.json` 都已被 Git 忽略。服务端会解析软链真实路径，并仅允许读取 `sourceRoots` 中指定的源码；`node_modules`、构建产物和 Git 目录默认排除。可通过以下接口检查连接和按需检索：
+
+- `GET /api/projects`：列出本地项目及连接状态
+- `POST /api/projects/:id/validate`：校验项目根目录、源码目录和 Git 信息
+- `POST /api/projects/:id/resolve-route`：根据页面 URL 查询路由和懒加载组件
+- `POST /api/projects/:id/search-source`：在允许范围内搜索源码
+- `POST /api/projects/:id/inspect-source`：按明确原因读取有限的指定文件
+
+本地配置也可通过 `PROJECTS_CONFIG_PATH` 指向其他 JSON 文件。业务页面运行时状态仍以真实 DOM 为准，源码查询结果只作为辅助上下文。
+
 ## 当前实现
 
 - Vue 3 + TypeScript + Vite
@@ -59,6 +86,7 @@ npx playwright codegen --save-storage=storage-state.json https://你的测试环
 
 - `npm run dev`：启动开发服务器
 - `npm run build`：生成生产构建
-- `npm run test`：执行当前构建检查
+- `npm run test`：执行服务端单元测试和生产构建
+- `npm run test:unit`：执行服务端单元测试
 - `npm run typecheck`：检查 Vue、API 与共享契约类型
 - `npm run lint`：检查构建与服务端配置代码

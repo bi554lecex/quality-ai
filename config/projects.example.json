@@ -1,0 +1,20 @@
+{
+  "projects": [
+    {
+      "id": "lvworkbench-workbench",
+      "name": "LV Workbench",
+      "root": "./targets/lvworkbench",
+      "targetOrigins": ["http://localhost:5173"],
+      "sourceRoots": [
+        "project/workbench/src",
+        "packages"
+      ],
+      "excludeDirectories": [
+        "node_modules",
+        "dist",
+        ".git",
+        "coverage"
+      ]
+    }
+  ]
+}
