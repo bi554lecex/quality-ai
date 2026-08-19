@@ -2,13 +2,9 @@ import { jsonrepair } from 'jsonrepair'
 import { agentDecisionSchema, type AgentDecision } from '../shared/contracts'
 import type { AgentDecisionInput, AgentDecisionProvider } from './test-agent'
 import { getModelConfig, type ModelConfig } from './model-config'
+import { ResponsesModelClient, type ModelMessage } from './model-client'
 
-interface CompletionResponse {
-  choices?: Array<{ finish_reason?: string; message?: { content?: string | null } }>
-  error?: { message?: string }
-}
-
-interface DeepSeekDecisionProviderOptions extends Partial<ModelConfig> {
+interface ResponsesDecisionProviderOptions extends Partial<ModelConfig> {
   fetchImpl?: typeof fetch
   timeoutMs?: number
 }
@@ -41,11 +37,7 @@ function compactInput(input: AgentDecisionInput) {
   return {
     goal: input.goal,
     currentSnapshot: input.snapshot,
-    recentTrajectory: input.trajectory.slice(-8).map(item => ({
-      iteration: item.iteration,
-      decision: item.decision,
-      result: item.result,
-    })),
+    recentTrajectory: input.trajectory.slice(-8).map(item => ({ iteration: item.iteration, decision: item.decision, result: item.result })),
     projectContexts: input.projectContexts.slice(-2),
   }
 }
@@ -54,59 +46,29 @@ function cleanJsonOutput(output: string) {
   return output.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '')
 }
 
-export class DeepSeekDecisionProvider implements AgentDecisionProvider {
-  private readonly config: ModelConfig
-  private readonly fetchImpl: typeof fetch
-  private readonly timeoutMs: number
+export class ResponsesDecisionProvider implements AgentDecisionProvider {
+  private readonly client: ResponsesModelClient
 
-  constructor(options: DeepSeekDecisionProviderOptions = {}) {
-    this.config = getModelConfig(options)
-    this.fetchImpl = options.fetchImpl ?? fetch
-    this.timeoutMs = options.timeoutMs ?? 60_000
+  constructor(options: ResponsesDecisionProviderOptions = {}) {
+    this.client = new ResponsesModelClient(getModelConfig(options), options.fetchImpl, options.timeoutMs ?? 60_000)
   }
 
   async decide(input: AgentDecisionInput): Promise<AgentDecision> {
-    const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
+    const messages: ModelMessage[] = [
       { role: 'system', content: decisionSystemPrompt },
       { role: 'user', content: `请决定下一步。当前输入：\n${JSON.stringify(compactInput(input))}` },
     ]
     let lastError: Error | undefined
-
     for (let attempt = 0; attempt < 2; attempt += 1) {
       try {
-        const response = await this.fetchImpl(`${this.config.baseUrl}/chat/completions`, {
-          method: 'POST',
-          headers: {
-            authorization: `Bearer ${this.config.apiKey}`,
-            'content-type': 'application/json',
-          },
-          body: JSON.stringify({
-            model: this.config.model,
-            messages,
-            response_format: { type: 'json_object' },
-            thinking: { type: 'disabled' },
-            temperature: 0,
-            max_tokens: 1200,
-            stream: false,
-          }),
-          signal: AbortSignal.timeout(this.timeoutMs),
-        })
-        const payload = await response.json() as CompletionResponse
-        if (!response.ok) throw new Error(payload.error?.message ?? `模型请求失败（HTTP ${response.status}）`)
-        const choice = payload.choices?.[0]
-        if (choice?.finish_reason === 'length') throw new Error('单步决策输出超过长度限制')
-        const output = choice?.message?.content?.trim()
-        if (!output) throw new Error('模型返回了空决策')
+        const output = await this.client.generateText({ messages, maxOutputTokens: 1200 })
         try {
           return agentDecisionSchema.parse(JSON.parse(jsonrepair(cleanJsonOutput(output))))
         } catch (error) {
           lastError = error instanceof Error ? error : new Error(String(error))
           if (attempt === 0) {
             messages.push({ role: 'assistant', content: output.slice(0, 8_000) })
-            messages.push({
-              role: 'user',
-              content: `上一个 JSON 未通过 AgentDecision Schema 校验：${lastError.message.slice(0, 2_000)}。请只修复结构和字段，仍然只输出一个 JSON 对象。`,
-            })
+            messages.push({ role: 'user', content: `上一个 JSON 未通过 AgentDecision Schema 校验：${lastError.message.slice(0, 2_000)}。请只修复结构和字段，仍然只输出一个 JSON 对象。` })
             continue
           }
         }
@@ -114,7 +76,6 @@ export class DeepSeekDecisionProvider implements AgentDecisionProvider {
         lastError = error instanceof Error ? error : new Error(String(error))
       }
     }
-
-    throw new Error(`DeepSeek 单步决策失败：${lastError?.message ?? '未知错误'}`)
+    throw new Error(`单步决策失败：${lastError?.message ?? '未知错误'}`)
   }
 }

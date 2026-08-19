@@ -14,9 +14,12 @@ npm run dev
 在 `.env.local` 中配置模型，文件已被 Git 忽略：
 
 ```dotenv
-DEEPSEEK_API_KEY=your-key
-MODEL_BASE_URL=https://api.deepseek.com
-MODEL_NAME=deepseek-v4-flash
+MODEL_API_KEY=your-company-key
+MODEL_BASE_URL=http://ai-service.tal.com/coding/v1
+MODEL_PROTOCOL=openai-responses
+MODEL_NAME=gpt-5.6-terra
+MODEL_USER_AGENT=codex_cli_rs/你的本机版本（操作系统；架构）
+MODEL_ORIGINATOR=codex_cli_rs
 API_PORT=8787
 ```
 
@@ -57,7 +60,7 @@ cp config/projects.example.json config/projects.local.json
 ## 当前实现
 
 - Vue 3 + TypeScript + Vite
-- DeepSeek/OpenAI-compatible 模型适配层
+- 公司 coding 网关 OpenAI Responses 模型适配层
 - Markdown/TXT PRD 与接口技术文档的多文件联合解析
 - 基于 Node.js 内置 SQLite 的本地持久化
 - 0825 版本两个真实需求的解析验证
@@ -69,8 +72,8 @@ cp config/projects.example.json config/projects.local.json
 - 语义 DOM 快照、临时 `elementRef` 注册表、弹窗/表格/页面消息提取与快照失效保护
 - `POST /api/automation/observe` 页面观察接口，可复用测试环境的 `storageState`
 - 受控单步 Agent 动作、`snapshotId`/`elementRef` 策略校验和必要断言完成门禁
-- DeepSeek 单步决策 Provider，使用紧凑上下文和 AgentDecision Schema 校验，格式错误时按校验反馈修复
-- 选中业务用例后由 DeepSeek 生成受控 DSL，并可对指定测试环境立即执行
+- Responses 单步决策 Provider，使用紧凑上下文和 AgentDecision Schema 校验，格式错误时按校验反馈修复
+- 选中业务用例后由公司模型生成受控 DSL，并可对指定测试环境立即执行
 - 测试环境持久化与 Playwright `storageState` 登录态导入、复用
 - 登录态仅保存在 Git 忽略的 `data/auth` 目录，接口只返回是否已配置，不返回凭据或磁盘路径
 - 执行中心集中展示执行历史、通过率、失败原因、步骤耗时与证据下载

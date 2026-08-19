@@ -251,7 +251,7 @@ async function persistEnvironment() {
 async function generatePlanOnly() {
   if (!savedAnalysis.value || !selectedCount.value || !targetUrl.value) return toast('请先选择用例并填写测试环境地址')
   executionRunning.value = true
-  notice.value = 'DeepSeek 正在生成受控 Playwright 计划…'
+  notice.value = '公司模型正在生成受控 Playwright 计划…'
   try {
     await persistEnvironment()
     const generateResponse = await fetch('/api/automation/generate', {
@@ -361,7 +361,7 @@ async function importPrd(event: Event) {
     confirmed.value = {}
     selectedCases.value = {}
     await refreshAnalysisHistory()
-    toast(`DeepSeek 已联合解析 ${files.length} 份材料，提取 ${payload.analysis.result.requirements.length} 个需求`)
+    toast(`公司模型已联合解析 ${files.length} 份材料，提取 ${payload.analysis.result.requirements.length} 个需求`)
   } catch (error) {
     toast(`解析失败：${error instanceof Error ? error.message : '未知错误'}`)
   } finally {
@@ -380,7 +380,7 @@ onMounted(loadSavedAnalysis)
       <nav>
         <button :class="{active:workspaceView==='version'}" @click="workspaceView='version'"><i>版</i>版本中心</button><button><i>需</i>需求中心<em>{{ requirements.length }}</em></button><button><i>例</i>用例资产</button><button :class="{active:workspaceView==='executions'}" @click="workspaceView='executions'"><i>执</i>执行中心<em>{{ executionHistory.length }}</em></button><button><i>忆</i>质量记忆</button>
       </nav>
-      <div class="side-bottom"><div class="memory"><b :class="{offline:!apiConfigured}"></b><p><strong>{{ apiConfigured ? 'DeepSeek 已连接' : '模型服务未连接' }}</strong><small>{{ savedAnalysis ? `${savedAnalysis.model} · 已持久化` : '当前显示示例数据' }}</small></p></div><div class="user"><span>TX</span><p><strong>测试小组</strong><small>前端质量空间</small></p></div></div>
+      <div class="side-bottom"><div class="memory"><b :class="{offline:!apiConfigured}"></b><p><strong>{{ apiConfigured ? '公司模型已连接' : '模型服务未连接' }}</strong><small>{{ savedAnalysis ? `${savedAnalysis.model} · 已持久化` : '当前显示示例数据' }}</small></p></div><div class="user"><span>TX</span><p><strong>测试小组</strong><small>前端质量空间</small></p></div></div>
     </aside>
 
     <main>
@@ -388,7 +388,7 @@ onMounted(loadSavedAnalysis)
       <div class="workspace">
         <template v-if="workspaceView==='version'">
         <section class="heading"><div><small><i></i>{{ savedAnalysis ? `真实解析 · ${savedAnalysis.provider}` : '示例模式 · 等待导入 PRD' }}</small><h1>{{ analysis.productName }} · {{ analysis.versionName }}</h1><p>{{ analysis.overview }}</p></div><div><button>分享评审</button><button class="primary" @click="activeTab='cases';toast('已切换到当前测试用例')">查看测试建议</button></div></section>
-        <section class="metrics"><article><i class="purple">需</i><p><span>前端需求</span><strong>{{ requirements.length }}</strong><small>{{ savedAnalysis ? 'DeepSeek 已解析' : '当前为示例数据' }}</small></p></article><article><i class="amber">?</i><p><span>待确认问题</span><strong>{{ totalQuestions }}</strong><small>影响规则与用例</small></p></article><article><i class="blue">例</i><p><span>测试用例</span><strong>{{ totalCases }}</strong><small>{{ readyCases }} 条可执行</small></p></article><article><i class="green">✓</i><p><span>当前可执行率</span><strong>{{ coverage }}%</strong><small>确认后继续提升</small></p></article></section>
+        <section class="metrics"><article><i class="purple">需</i><p><span>前端需求</span><strong>{{ requirements.length }}</strong><small>{{ savedAnalysis ? '公司模型已解析' : '当前为示例数据' }}</small></p></article><article><i class="amber">?</i><p><span>待确认问题</span><strong>{{ totalQuestions }}</strong><small>影响规则与用例</small></p></article><article><i class="blue">例</i><p><span>测试用例</span><strong>{{ totalCases }}</strong><small>{{ readyCases }} 条可执行</small></p></article><article><i class="green">✓</i><p><span>当前可执行率</span><strong>{{ coverage }}%</strong><small>确认后继续提升</small></p></article></section>
 
         <section class="content-grid">
           <aside class="requirements"><div class="section-title"><span>版本需求</span><b>{{ requirements.length }} 项</b></div>

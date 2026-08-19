@@ -48,9 +48,9 @@ const server = createServer(async (request, response) => {
     if (request.method === 'GET' && request.url === '/api/health') {
       return json(response, 200, {
         ok: true,
-        provider: 'deepseek',
-        model: process.env.MODEL_NAME ?? 'deepseek-v4-flash',
-        configured: Boolean(process.env.DEEPSEEK_API_KEY),
+        provider: 'company-responses',
+        model: process.env.MODEL_NAME ?? 'gpt-5.6-terra',
+        configured: Boolean(process.env.MODEL_API_KEY ?? process.env.DEEPSEEK_API_KEY),
       })
     }
 
@@ -268,7 +268,7 @@ const server = createServer(async (request, response) => {
         fileName: fileNames.join('、'),
         fileNames,
         sourceText: documents.map(document => document.content).join('\n\n---\n\n'),
-        provider: 'deepseek',
+        provider: 'company-responses',
         model,
         result,
         createdAt: new Date().toISOString(),

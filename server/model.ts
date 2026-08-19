@@ -1,11 +1,7 @@
 import { automationPlanSchema, prdAnalysisSchema, type AutomationPlan, type PrdAnalysis } from '../shared/contracts'
 import { jsonrepair } from 'jsonrepair'
 import { getModelConfig } from './model-config'
-
-interface CompletionResponse {
-  choices?: Array<{ finish_reason?: string; message?: { content?: string | null } }>
-  error?: { message?: string }
-}
+import { ResponsesModelClient } from './model-client'
 
 const systemPrompt = `你是一名资深 B 端前端测试架构师。请阅读用户提供的 PRD，并输出严格 JSON。
 目标不是复述文档，而是把需求转成可评审、可测试、未来可映射到 Playwright 的结构。
@@ -50,6 +46,7 @@ export interface SourceDocument {
 
 export async function analyzePrd(documents: SourceDocument[]): Promise<{ result: PrdAnalysis; model: string }> {
   const config = getModelConfig()
+  const client = new ResponsesModelClient(config)
   let lastError: Error | null = null
   const documentText = documents.map(document => {
     const roleName = document.role === 'prd' ? '主 PRD' : '补充接口/技术文档'
@@ -58,33 +55,13 @@ export async function analyzePrd(documents: SourceDocument[]): Promise<{ result:
 
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
-      const response = await fetch(`${config.baseUrl}/chat/completions`, {
-        method: 'POST',
-        headers: {
-          authorization: `Bearer ${config.apiKey}`,
-          'content-type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: config.model,
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: `以下是本版本的需求材料。主 PRD 决定业务目标；接口或技术文档只用于补充字段、枚举、接口契约和异常分支。如果材料冲突，必须生成待确认问题，不能擅自选择。\n\n${documentText}` },
-          ],
-          response_format: { type: 'json_object' },
-          thinking: { type: 'disabled' },
-          temperature: 0.1,
-          max_tokens: 12000,
-          stream: false,
-        }),
-        signal: AbortSignal.timeout(180_000),
+      const output = await client.generateText({
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: `以下是本版本的需求材料。主 PRD 决定业务目标；接口或技术文档只用于补充字段、枚举、接口契约和异常分支。如果材料冲突，必须生成待确认问题，不能擅自选择。\n\n${documentText}` },
+        ],
+        maxOutputTokens: 12000,
       })
-
-      const payload = await response.json() as CompletionResponse
-      if (!response.ok) throw new Error(payload.error?.message ?? `模型请求失败（HTTP ${response.status}）`)
-      const choice = payload.choices?.[0]
-      if (choice?.finish_reason === 'length') throw new Error('模型输出超过长度限制')
-      const output = choice?.message?.content?.trim()
-      if (!output) throw new Error('模型返回了空内容')
       const jsonText = output.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '')
       return { result: prdAnalysisSchema.parse(JSON.parse(jsonrepair(jsonText))), model: config.model }
     } catch (error) {
@@ -97,6 +74,7 @@ export async function analyzePrd(documents: SourceDocument[]): Promise<{ result:
 
 export async function generateAutomationPlan(targetUrl: string, testCases: PrdAnalysis['requirements'][number]['testCases']): Promise<AutomationPlan> {
   const config = getModelConfig()
+  const client = new ResponsesModelClient(config)
   const prompt = `你是 Playwright 自动化测试规划器。将测试用例转换为严格 JSON 的受控步骤，不输出 JavaScript。
 允许动作只有：
 - {"action":"goto","path":"/相对路径"}
@@ -108,15 +86,6 @@ export async function generateAutomationPlan(targetUrl: string, testCases: PrdAn
 JSON 格式：{"name":"计划名称","targetUrl":"${targetUrl}","steps":[]}
 目标地址：${targetUrl}
 测试用例：${JSON.stringify(testCases)}`
-  const response = await fetch(`${config.baseUrl}/chat/completions`, {
-    method: 'POST',
-    headers: { authorization: `Bearer ${config.apiKey}`, 'content-type': 'application/json' },
-    body: JSON.stringify({ model: config.model, messages: [{ role: 'user', content: prompt }], response_format: { type: 'json_object' }, thinking: { type: 'disabled' }, temperature: 0.1, max_tokens: 6000, stream: false }),
-    signal: AbortSignal.timeout(180_000),
-  })
-  const payload = await response.json() as CompletionResponse
-  if (!response.ok) throw new Error(payload.error?.message ?? `模型请求失败（HTTP ${response.status}）`)
-  const output = payload.choices?.[0]?.message?.content?.trim()
-  if (!output) throw new Error('模型未生成自动化计划')
+  const output = await client.generateText({ messages: [{ role: 'user', content: prompt }], maxOutputTokens: 6000 })
   return automationPlanSchema.parse(JSON.parse(jsonrepair(output.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, ''))))
 }

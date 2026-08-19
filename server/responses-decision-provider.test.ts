@@ -1,0 +1,52 @@
+import assert from 'node:assert/strict'
+import test from 'node:test'
+import { agentTestGoalSchema, pageSnapshotSchema } from '../shared/contracts'
+import { ResponsesDecisionProvider } from './responses-decision-provider'
+
+function decisionInput() {
+  return {
+    goal: agentTestGoalSchema.parse({ name: '查询学生', targetUrl: 'http://localhost:5173/students', objective: '输入姓名并查询', requiredAssertions: [{ id: 'student-visible', description: '列表显示张三' }] }),
+    snapshot: pageSnapshotSchema.parse({
+      snapshotId: '7aa1e1de-dcc0-4aa5-8182-c647d615c96a', observedAt: new Date().toISOString(), url: 'http://localhost:5173/students', title: '学生管理', loading: false,
+      elements: [{ ref: 'e1', tag: 'input', role: 'textbox', name: '学生姓名', visible: true, enabled: true }], dialogs: [], tables: [], messages: [],
+      stats: { discoveredElements: 1, returnedElements: 1, truncated: false },
+    }),
+    trajectory: [], projectContexts: [],
+  }
+}
+
+function responseWithText(text: string, status = 200) {
+  return new Response(JSON.stringify({ status: 'completed', output: [{ type: 'message', content: [{ type: 'output_text', text }] }] }), { status })
+}
+
+const modelOptions = {
+  apiKey: 'test-key', baseUrl: 'http://model.test/v1', model: 'test-model',
+  userAgent: 'codex_cli_rs/test', originator: 'codex_cli_rs',
+} as const
+
+test('uses Responses API headers and returns a validated single action', async () => {
+  const requests: Array<{ url: string; init?: RequestInit }> = []
+  const provider = new ResponsesDecisionProvider({ ...modelOptions, fetchImpl: async (input, init) => {
+    requests.push({ url: String(input), init })
+    return responseWithText(JSON.stringify({ type: 'action', snapshotId: decisionInput().snapshot.snapshotId, action: { action: 'fill', elementRef: 'e1', value: '张三' }, reason: '填写查询条件' }))
+  } })
+  assert.equal((await provider.decide(decisionInput())).type, 'action')
+  assert.equal(requests[0].url, 'http://model.test/v1/responses')
+  assert.equal(new Headers(requests[0].init?.headers).get('originator'), 'codex_cli_rs')
+  const body = JSON.parse(String(requests[0].init?.body)) as { input: Array<{ content: string }>; store: boolean }
+  assert.match(body.input[0].content, /学生姓名/)
+  assert.equal(body.store, false)
+})
+
+test('repairs an invalid first Responses output with schema feedback', async () => {
+  const bodies: string[] = []
+  let call = 0
+  const provider = new ResponsesDecisionProvider({ ...modelOptions, fetchImpl: async (_input, init) => {
+    bodies.push(String(init?.body)); call += 1
+    return responseWithText(call === 1
+      ? '{"type":"action","snapshotId":"invalid","action":{"action":"click","elementRef":"e1"},"reason":"查询"}'
+      : '{"type":"blocked","reason":"缺少可安全执行的信息"}')
+  } })
+  assert.deepEqual(await provider.decide(decisionInput()), { type: 'blocked', reason: '缺少可安全执行的信息' })
+  assert.match(bodies[1], /未通过 AgentDecision Schema 校验/)
+})
