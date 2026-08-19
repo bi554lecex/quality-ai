@@ -16,7 +16,13 @@ interface TestPolicyOptions {
 }
 
 const elementActions = new Set<AgentAction['action']>([
-  'click', 'fill', 'selectOption', 'check', 'uncheck', 'expectVisible', 'expectValue',
+  'click', 'fill', 'selectOption', 'check', 'uncheck', 'press', 'hover', 'scroll',
+  'expectVisible', 'expectEnabled', 'expectDisabled', 'expectChecked', 'expectValue',
+  'expectElementText', 'expectAttribute',
+])
+
+const enabledElementActions = new Set<AgentAction['action']>([
+  'click', 'fill', 'selectOption', 'check', 'uncheck', 'press',
 ])
 
 export class TestPolicy {
@@ -51,12 +57,18 @@ export class TestPolicy {
       const destination = new URL(action.path, this.goal.targetUrl)
       if (destination.origin !== new URL(this.goal.targetUrl).origin) throw new Error('动作不能跳转到测试环境之外')
     }
-    if (elementActions.has(action.action)) {
-      const elementRef = 'elementRef' in action ? action.elementRef : ''
-      const element = snapshot.elements.find(item => item.ref === elementRef)
-      if (!element) throw new Error(`当前页面不存在元素引用：${elementRef}`)
-      if (['click', 'fill', 'selectOption', 'check', 'uncheck'].includes(action.action) && !element.enabled) {
-        throw new Error(`元素当前不可用：${elementRef}`)
+    const hiddenElementRef = action.action === 'expectHidden' && action.target.by === 'elementRef'
+      ? action.target.elementRef
+      : undefined
+    const countContainerRef = action.action === 'expectCount' ? action.containerRef : undefined
+    if (elementActions.has(action.action) || hiddenElementRef || countContainerRef) {
+      const elementRef = hiddenElementRef ?? countContainerRef ?? ('elementRef' in action ? action.elementRef : undefined)
+      if (elementRef) {
+        const element = snapshot.elements.find(item => item.ref === elementRef)
+        if (!element) throw new Error(`当前页面不存在元素引用：${elementRef}`)
+        if (enabledElementActions.has(action.action) && !element.enabled) {
+          throw new Error(`元素当前不可用：${elementRef}`)
+        }
       }
     }
     if ('assertionId' in action && !this.goal.requiredAssertions.some(assertion => assertion.id === action.assertionId)) {

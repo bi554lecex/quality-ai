@@ -248,6 +248,28 @@ const elementActionBase = {
   elementRef: z.string().regex(/^e\d+$/),
 }
 
+const keyboardKeySchema = z.enum([
+  'Enter', 'Escape', 'Tab', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight',
+  'Home', 'End', 'PageUp', 'PageDown', 'Backspace', 'Delete', 'Space',
+])
+
+const semanticRoleSchema = z.enum([
+  'alert', 'button', 'cell', 'checkbox', 'combobox', 'dialog', 'grid', 'gridcell',
+  'heading', 'link', 'listbox', 'listitem', 'menu', 'menuitem', 'option', 'radio',
+  'row', 'status', 'switch', 'tab', 'textbox', 'tree', 'treeitem',
+])
+
+const hiddenTargetSchema = z.discriminatedUnion('by', [
+  z.object({ by: z.literal('elementRef'), ...elementActionBase }),
+  z.object({ by: z.literal('text'), text: z.string().min(1), exact: z.boolean().default(false) }),
+  z.object({ by: z.literal('role'), role: semanticRoleSchema, name: z.string().optional(), exact: z.boolean().default(false) }),
+])
+
+const assertableAttributeSchema = z.enum([
+  'aria-checked', 'aria-current', 'aria-disabled', 'aria-expanded', 'aria-invalid',
+  'aria-selected', 'class', 'data-state', 'role',
+])
+
 export const agentActionSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('goto'), path: z.string().min(1) }),
   z.object({ action: z.literal('click'), ...elementActionBase }),
@@ -255,9 +277,39 @@ export const agentActionSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('selectOption'), ...elementActionBase, value: z.string() }),
   z.object({ action: z.literal('check'), ...elementActionBase }),
   z.object({ action: z.literal('uncheck'), ...elementActionBase }),
+  z.object({ action: z.literal('press'), ...elementActionBase, key: keyboardKeySchema }),
+  z.object({ action: z.literal('hover'), ...elementActionBase }),
+  z.object({
+    action: z.literal('scroll'),
+    elementRef: elementActionBase.elementRef.optional(),
+    deltaX: z.number().int().min(-3_000).max(3_000).default(0),
+    deltaY: z.number().int().min(-3_000).max(3_000),
+  }),
   z.object({ action: z.literal('expectVisible'), ...elementActionBase, assertionId: z.string().min(1) }),
+  z.object({ action: z.literal('expectHidden'), target: hiddenTargetSchema, assertionId: z.string().min(1) }),
+  z.object({ action: z.literal('expectEnabled'), ...elementActionBase, assertionId: z.string().min(1) }),
+  z.object({ action: z.literal('expectDisabled'), ...elementActionBase, assertionId: z.string().min(1) }),
+  z.object({ action: z.literal('expectChecked'), ...elementActionBase, checked: z.boolean(), assertionId: z.string().min(1) }),
   z.object({ action: z.literal('expectValue'), ...elementActionBase, value: z.string(), assertionId: z.string().min(1) }),
   z.object({ action: z.literal('expectText'), text: z.string().min(1), assertionId: z.string().min(1) }),
+  z.object({ action: z.literal('expectElementText'), ...elementActionBase, text: z.string().min(1), exact: z.boolean().default(false), assertionId: z.string().min(1) }),
+  z.object({
+    action: z.literal('expectAttribute'),
+    ...elementActionBase,
+    name: assertableAttributeSchema,
+    value: z.string(),
+    match: z.enum(['equals', 'contains']).default('equals'),
+    assertionId: z.string().min(1),
+  }),
+  z.object({
+    action: z.literal('expectCount'),
+    containerRef: elementActionBase.elementRef.optional(),
+    role: semanticRoleSchema,
+    name: z.string().optional(),
+    exact: z.boolean().default(false),
+    count: z.number().int().min(0).max(1_000),
+    assertionId: z.string().min(1),
+  }),
   z.object({ action: z.literal('waitFor'), durationMs: z.number().int().min(100).max(5_000) }),
   z.object({ action: z.literal('screenshot'), name: z.string().min(1) }),
 ])

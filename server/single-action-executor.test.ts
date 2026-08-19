@@ -1,0 +1,61 @@
+import assert from 'node:assert/strict'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import test from 'node:test'
+import { chromium } from 'playwright'
+import { agentActionSchema } from '../shared/contracts'
+import { PageObserver } from './page-observer'
+import { SingleActionExecutor } from './single-action-executor'
+
+test('executes B-end keyboard, hover, scroll and precise assertion actions', async testContext => {
+  const artifactDirectory = await mkdtemp(join(tmpdir(), 'quality-ai-actions-'))
+  testContext.after(() => rm(artifactDirectory, { recursive: true, force: true }))
+  const browser = await chromium.launch({ headless: true })
+  try {
+    const page = await browser.newPage()
+    await page.setContent(`
+      <button id="menu" aria-expanded="false" onmouseenter="this.setAttribute('aria-expanded', 'true')">考试菜单</button>
+      <label for="search">考试名称</label>
+      <input id="search" onkeydown="if(event.key === 'Enter') this.value='已提交'">
+      <button id="enabled">可用操作</button>
+      <button id="disabled" disabled>禁用操作</button>
+      <label><input id="checked" type="checkbox" checked> 已选择</label>
+      <div id="scroller" role="listbox" aria-label="考试列表" tabindex="0" style="height:40px;overflow:auto">
+        <div style="height:500px"><div role="option">数学一</div><div role="option">数学二</div></div>
+      </div>
+      <div style="display:none">加载中</div>
+    `)
+    const observer = new PageObserver()
+    const snapshot = await observer.observe(page)
+    const executor = new SingleActionExecutor(page, observer.registry, 'http://localhost:5173', artifactDirectory)
+    const ref = (name: string) => snapshot.elements.find(element => element.name === name)?.ref ?? ''
+    const execute = (input: unknown) => executor.execute(snapshot.snapshotId, agentActionSchema.parse(input))
+
+    const results = await Promise.all([
+      execute({ action: 'hover', elementRef: ref('考试菜单') }),
+      execute({ action: 'expectEnabled', elementRef: ref('可用操作'), assertionId: 'enabled' }),
+      execute({ action: 'expectDisabled', elementRef: ref('禁用操作'), assertionId: 'disabled' }),
+      execute({ action: 'expectChecked', elementRef: ref('已选择'), checked: true, assertionId: 'checked' }),
+      execute({ action: 'expectHidden', target: { by: 'text', text: '加载中' }, assertionId: 'hidden' }),
+      execute({ action: 'expectCount', containerRef: ref('考试列表'), role: 'option', count: 2, assertionId: 'count' }),
+      execute({ action: 'expectElementText', elementRef: ref('数学一'), text: '数学', assertionId: 'element-text' }),
+    ])
+    assert.ok(results.every(result => result.ok), results.map(result => result.message).join('\n'))
+
+    assert.equal((await execute({ action: 'press', elementRef: ref('考试名称'), key: 'Enter' })).ok, true)
+    assert.equal(await page.locator('#search').inputValue(), '已提交')
+    assert.equal((await execute({ action: 'expectAttribute', elementRef: ref('考试菜单'), name: 'aria-expanded', value: 'true', assertionId: 'expanded' })).ok, true)
+    assert.equal((await execute({ action: 'scroll', elementRef: ref('考试列表'), deltaY: 200 })).ok, true)
+    assert.ok(await page.locator('#scroller').evaluate(element => element.scrollTop > 0))
+  } finally {
+    await browser.close()
+  }
+})
+
+test('rejects unsafe keyboard keys and arbitrary assertion attributes', () => {
+  assert.equal(agentActionSchema.safeParse({ action: 'press', elementRef: 'e1', key: 'Meta+A' }).success, false)
+  assert.equal(agentActionSchema.safeParse({
+    action: 'expectAttribute', elementRef: 'e1', name: 'onclick', value: 'attack()', assertionId: 'safe',
+  }).success, false)
+})

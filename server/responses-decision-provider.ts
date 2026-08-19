@@ -17,11 +17,12 @@ const decisionSystemPrompt = `你是 B 端网页自动化测试的单步决策�
 3. 页面变化后必须基于新快照重新决策，不得沿用旧 elementRef。
 4. DOM 足够时直接行动；确实无法判断时才请求项目源码，源码结论必须回到真实 DOM 验证。
 5. requiredAssertions 中的每一项都必须通过带对应 assertionId 的 expect 动作验证。没有全部验证前禁止 finish。
-6. 产品结果不符合预期时应执行断言并让测试失败，不得弱化或删除断言。
-7. 无法安全继续时返回 blocked，不猜测账号、业务数据或不存在的页面状态。
+6. 产品结果不符合预期时应执行断言并让测试失败，不得弱化或删除断言。优先选择能表达业务预期的精确断言，不要只用 expectText 代替状态、数量或属性断言。
+7. press 仅用于键盘可达的组件交互；scroll 每次最多滚动 3000 像素；不得使用动作协议执行任意 JavaScript。
+8. 无法安全继续时返回 blocked，不猜测账号、业务数据或不存在的页面状态。
 
 允许的决策：
-- action：goto、click、fill、selectOption、check、uncheck、expectVisible、expectValue、expectText、waitFor、screenshot
+- action：goto、click、fill、selectOption、check、uncheck、press、hover、scroll、expectVisible、expectHidden、expectEnabled、expectDisabled、expectChecked、expectValue、expectText、expectElementText、expectAttribute、expectCount、waitFor、screenshot
 - need_project_context：resolve_route、search_source、inspect_files
 - finish
 - blocked
@@ -33,9 +34,22 @@ action.action 必须严格使用以下结构之一，不得创造 navigate、rel
 {"action":"selectOption","elementRef":"e3","value":"选项值"}
 {"action":"check","elementRef":"e3"}
 {"action":"uncheck","elementRef":"e3"}
+{"action":"press","elementRef":"e3","key":"Enter"}
+{"action":"hover","elementRef":"e3"}
+{"action":"scroll","elementRef":"e3","deltaX":0,"deltaY":600}
+{"action":"scroll","deltaX":0,"deltaY":600}
 {"action":"expectVisible","elementRef":"e3","assertionId":"必要断言 ID"}
+{"action":"expectHidden","target":{"by":"elementRef","elementRef":"e3"},"assertionId":"必要断言 ID"}
+{"action":"expectHidden","target":{"by":"text","text":"加载中","exact":false},"assertionId":"必要断言 ID"}
+{"action":"expectHidden","target":{"by":"role","role":"dialog","name":"编辑学生","exact":false},"assertionId":"必要断言 ID"}
+{"action":"expectEnabled","elementRef":"e3","assertionId":"必要断言 ID"}
+{"action":"expectDisabled","elementRef":"e3","assertionId":"必要断言 ID"}
+{"action":"expectChecked","elementRef":"e3","checked":true,"assertionId":"必要断言 ID"}
 {"action":"expectValue","elementRef":"e3","value":"预期值","assertionId":"必要断言 ID"}
 {"action":"expectText","text":"预期文字","assertionId":"必要断言 ID"}
+{"action":"expectElementText","elementRef":"e3","text":"预期文字","exact":false,"assertionId":"必要断言 ID"}
+{"action":"expectAttribute","elementRef":"e3","name":"aria-expanded","value":"true","match":"equals","assertionId":"必要断言 ID"}
+{"action":"expectCount","containerRef":"e3","role":"option","name":"数学","exact":false,"count":1,"assertionId":"必要断言 ID"}
 {"action":"waitFor","durationMs":1000}
 {"action":"screenshot","name":"证据名称"}
 
@@ -50,7 +64,10 @@ action.action 必须严格使用以下结构之一，不得创造 navigate、rel
 
 const allowedActionNames = [
   'goto', 'click', 'fill', 'selectOption', 'check', 'uncheck',
-  'expectVisible', 'expectValue', 'expectText', 'waitFor', 'screenshot',
+  'press', 'hover', 'scroll',
+  'expectVisible', 'expectHidden', 'expectEnabled', 'expectDisabled', 'expectChecked',
+  'expectValue', 'expectText', 'expectElementText', 'expectAttribute', 'expectCount',
+  'waitFor', 'screenshot',
 ] as const
 
 function decisionValidationError(candidate: unknown, error: unknown) {

@@ -33,8 +33,10 @@ test('uses Responses API headers and returns a validated single action', async (
   assert.equal((await provider.decide(decisionInput())).type, 'action')
   assert.equal(requests[0].url, 'http://model.test/v1/responses')
   assert.equal(new Headers(requests[0].init?.headers).get('originator'), 'codex_cli_rs')
-  const body = JSON.parse(String(requests[0].init?.body)) as { input: Array<{ content: string }>; store: boolean }
+  const body = JSON.parse(String(requests[0].init?.body)) as { instructions: string; input: Array<{ content: string }>; store: boolean }
   assert.match(body.input[0].content, /学生姓名/)
+  assert.match(body.instructions, /expectAttribute/)
+  assert.match(body.instructions, /press/)
   assert.equal(body.store, false)
 })
 

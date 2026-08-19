@@ -147,7 +147,20 @@ function decisionReason(decision: AgentDecision) { return decision.type === 'fin
 function actionDetail(decision: AgentDecision) {
   if (decision.type !== 'action') return ''
   const action = decision.action
-  if ('elementRef' in action) return `${action.elementRef}${'value' in action ? ` · ${action.value}` : ''}`
+  if ('target' in action) {
+    if (action.target.by === 'elementRef') return `${action.target.elementRef} · 隐藏`
+    if (action.target.by === 'text') return `文本“${action.target.text}” · 隐藏`
+    return `${action.target.role}${action.target.name ? `“${action.target.name}”` : ''} · 隐藏`
+  }
+  if (action.action === 'scroll') return `${action.elementRef ?? '页面'} · x=${action.deltaX}, y=${action.deltaY}`
+  if (action.action === 'expectCount') return `${action.containerRef ? `${action.containerRef} 内 ` : ''}${action.role}${action.name ? `“${action.name}”` : ''} · ${action.count} 个`
+  if ('elementRef' in action) {
+    if ('key' in action) return `${action.elementRef} · ${action.key}`
+    if ('name' in action && 'value' in action) return `${action.elementRef} · ${action.name} ${action.match} ${action.value}`
+    if ('text' in action) return `${action.elementRef} · ${action.text}`
+    if ('checked' in action) return `${action.elementRef} · ${action.checked ? '已选中' : '未选中'}`
+    return `${action.elementRef}${'value' in action ? ` · ${action.value}` : ''}`
+  }
   if ('text' in action) return action.text
   if ('path' in action) return action.path
   if ('durationMs' in action) return `${action.durationMs}ms`
