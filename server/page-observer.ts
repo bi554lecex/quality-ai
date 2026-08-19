@@ -24,20 +24,18 @@ export const interactiveElementSelector = [
   '[role="treeitem"]',
 ].join(',')
 
+export const elementRefAttribute = 'data-quality-ai-element-ref'
+
 interface ObserverOptions {
   maxElements?: number
   maxTextLength?: number
   maxTableRows?: number
 }
 
-interface ObservedElement extends SemanticElement {
-  locatorIndex: number
-}
-
 interface RawObservation {
   loading: boolean
   discoveredElements: number
-  elements: ObservedElement[]
+  elements: SemanticElement[]
   dialogs: PageSnapshot['dialogs']
   tables: PageSnapshot['tables']
   messages: PageSnapshot['messages']
@@ -55,6 +53,8 @@ export class PageObserver {
     const maxTableRows = this.options.maxTableRows ?? 3
     const raw = await page.evaluate<RawObservation, {
       selector: string
+      snapshotId: string
+      refAttribute: string
       maxElements: number
       maxTextLength: number
       maxTableRows: number
@@ -65,21 +65,21 @@ export class PageObserver {
       maxTableRows: number
     }) => RawObservation, {
       selector: interactiveElementSelector,
+      snapshotId,
+      refAttribute: elementRefAttribute,
       maxElements,
       maxTextLength,
       maxTableRows,
     })
 
-    this.registry.replace(snapshotId, page, interactiveElementSelector, raw.elements)
+    this.registry.replace(snapshotId, page, elementRefAttribute, raw.elements)
     return pageSnapshotSchema.parse({
       snapshotId,
       observedAt: new Date().toISOString(),
       url: page.url(),
       title: await page.title(),
       loading: raw.loading,
-      elements: raw.elements.map(element => Object.fromEntries(
-        Object.entries(element).filter(([key]) => key !== 'locatorIndex'),
-      )),
+      elements: raw.elements,
       dialogs: raw.dialogs,
       tables: raw.tables,
       messages: raw.messages,

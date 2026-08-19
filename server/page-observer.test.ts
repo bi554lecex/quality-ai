@@ -56,3 +56,28 @@ test('limits returned elements while reporting truncation', async () => {
     await browser.close()
   }
 })
+
+test('keeps an element ref bound to the observed DOM node when candidate indexes shift', async () => {
+  const browser = await chromium.launch({ headless: true })
+  try {
+    const page = await browser.newPage()
+    await page.setContent('<button id="target" onclick="this.dataset.clicked=\'true\'">选择考试</button>')
+    const observer = new PageObserver()
+    const snapshot = await observer.observe(page)
+    const target = snapshot.elements.find(element => element.name === '选择考试')
+    assert.ok(target)
+
+    await page.evaluate(() => {
+      const inserted = document.createElement('button')
+      inserted.id = 'inserted'
+      inserted.textContent = '异步插入的控件'
+      document.body.prepend(inserted)
+    })
+    await observer.registry.resolve(snapshot.snapshotId, target.ref).click()
+
+    assert.equal(await page.locator('#target').getAttribute('data-clicked'), 'true')
+    assert.equal(await page.locator('#inserted').getAttribute('data-clicked'), null)
+  } finally {
+    await browser.close()
+  }
+})

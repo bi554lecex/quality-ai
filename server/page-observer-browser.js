@@ -1,6 +1,6 @@
 // This function is serialized by Playwright and runs in the inspected page.
 // Keep it as plain JavaScript so Node-side transpiler helpers never leak into the browser context.
-export function observePageInBrowser({ selector, maxElements, maxTextLength, maxTableRows }) {
+export function observePageInBrowser({ selector, snapshotId, refAttribute, maxElements, maxTextLength, maxTableRows }) {
   const normalize = value => (value ?? '').replace(/\s+/g, ' ').trim()
   const compact = value => normalize(value).slice(0, maxTextLength)
   const isVisible = element => {
@@ -45,11 +45,12 @@ export function observePageInBrowser({ selector, maxElements, maxTextLength, max
     const heading = container.querySelector('[role="heading"],h1,h2,h3,.el-dialog__title,.el-drawer__title,legend,caption')
     return compact(heading?.textContent) || compact(container.getAttribute('aria-label')) || container.tagName.toLowerCase()
   }
+  document.querySelectorAll(`[${refAttribute}]`).forEach(element => element.removeAttribute(refAttribute))
   const candidates = [...document.querySelectorAll(selector)]
-  const visibleCandidates = candidates
-    .map((element, locatorIndex) => ({ element, locatorIndex }))
-    .filter(({ element }) => isVisible(element))
-  const elements = visibleCandidates.slice(0, maxElements).map(({ element, locatorIndex }, index) => {
+  const visibleCandidates = candidates.filter(isVisible)
+  const elements = visibleCandidates.slice(0, maxElements).map((element, index) => {
+    const ref = `e${index + 1}`
+    element.setAttribute(refAttribute, `${snapshotId}:${ref}`)
     const label = explicitLabel(element) || labelledBy(element) || compact(element.getAttribute('aria-label'))
     const placeholder = compact(element.getAttribute('placeholder')) || undefined
     const text = compact(element.innerText || element.textContent) || undefined
@@ -70,8 +71,7 @@ export function observePageInBrowser({ selector, maxElements, maxTextLength, max
       ? Boolean(element.required)
       : element.getAttribute('aria-required') === 'true' || undefined
     return {
-      ref: `e${index + 1}`,
-      locatorIndex,
+      ref,
       tag: element.tagName.toLowerCase(),
       role: inferRole(element),
       name,

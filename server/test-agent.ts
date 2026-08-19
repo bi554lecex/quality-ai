@@ -144,7 +144,11 @@ export class TestAgent {
       if (result.ok && assertionId) state.passedAssertions.add(assertionId)
       if (result.screenshotPath) screenshots.push(result.screenshotPath)
       trajectory.push({ iteration, snapshotId: snapshot.snapshotId, decision, observation: summarizeSnapshot(snapshot), result })
-      if (!result.ok) return this.result('failed', result.message, state, trajectory, screenshots)
+      if (!result.ok) {
+        if (!result.retryable) return this.result('failed', result.message, state, trajectory, screenshots)
+        snapshot = await this.observer.observe(page)
+        continue
+      }
       snapshot = await this.observer.observe(page)
     }
 

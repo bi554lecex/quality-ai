@@ -83,3 +83,48 @@ test('rejects finish when a required assertion has not passed', async () => {
     await browser.close()
   }
 })
+
+test('re-observes and continues after a retryable technical action failure', async () => {
+  const browser = await chromium.launch({ headless: true })
+  try {
+    const page = await browser.newPage()
+    await page.setContent('<button>选择考试</button><div>下拉框已展开</div>')
+    const goal = agentTestGoalSchema.parse({
+      name: '选择考试', targetUrl: 'http://localhost:5173', objective: '展开考试下拉框',
+      requiredAssertions: [{ id: 'opened', description: '下拉框已展开' }],
+    })
+    let turn = 0
+    let firstSnapshotId = ''
+    const provider: AgentDecisionProvider = {
+      async decide({ snapshot }) {
+        turn += 1
+        if (turn === 1) {
+          firstSnapshotId = snapshot.snapshotId
+          return { type: 'action', snapshotId: snapshot.snapshotId, action: { action: 'click', elementRef: 'e1' }, reason: '展开下拉框' }
+        }
+        if (turn === 2) {
+          assert.notEqual(snapshot.snapshotId, firstSnapshotId)
+          return { type: 'action', snapshotId: snapshot.snapshotId, action: { action: 'expectText', text: '下拉框已展开', assertionId: 'opened' }, reason: '验证展开结果' }
+        }
+        return { type: 'finish', summary: '已恢复并完成断言' }
+      },
+    }
+    let execution = 0
+    const executor = {
+      async execute() {
+        execution += 1
+        if (execution === 1) return { ok: false, code: 'technical_action_failed', retryable: true, message: '元素已重新渲染', durationMs: 1, pageChanged: false }
+        return { ok: true, code: 'ok', retryable: false, message: '动作执行成功', durationMs: 1, pageChanged: false }
+      },
+    } as unknown as SingleActionExecutor
+    const observer = new PageObserver()
+    const result = await new TestAgent(goal, observer, executor, provider).run(page)
+
+    assert.equal(result.status, 'passed')
+    assert.equal(result.executedSteps, 2)
+    assert.equal(result.trajectory[0].result?.retryable, true)
+    assert.deepEqual(result.passedAssertions, ['opened'])
+  } finally {
+    await browser.close()
+  }
+})

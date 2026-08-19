@@ -2,18 +2,18 @@ import type { Locator, Page } from 'playwright'
 
 interface RegisteredElement {
   ref: string
-  locatorIndex: number
 }
 
 export class ElementRegistry {
   private snapshotId?: string
   private readonly elements = new Map<string, Locator>()
 
-  replace(snapshotId: string, page: Page, selector: string, elements: RegisteredElement[]) {
+  replace(snapshotId: string, page: Page, refAttribute: string, elements: RegisteredElement[]) {
     this.snapshotId = snapshotId
     this.elements.clear()
-    const candidates = page.locator(selector)
-    for (const element of elements) this.elements.set(element.ref, candidates.nth(element.locatorIndex))
+    for (const element of elements) {
+      this.elements.set(element.ref, page.locator(`[${refAttribute}="${snapshotId}:${element.ref}"]`))
+    }
   }
 
   resolve(snapshotId: string, elementRef: string) {
