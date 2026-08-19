@@ -1,11 +1,6 @@
 import { automationPlanSchema, prdAnalysisSchema, type AutomationPlan, type PrdAnalysis } from '../shared/contracts'
 import { jsonrepair } from 'jsonrepair'
-
-interface ModelConfig {
-  apiKey: string
-  baseUrl: string
-  model: string
-}
+import { getModelConfig } from './model-config'
 
 interface CompletionResponse {
   choices?: Array<{ finish_reason?: string; message?: { content?: string | null } }>
@@ -47,16 +42,6 @@ const systemPrompt = `你是一名资深 B 端前端测试架构师。请阅读�
   }]
 }`
 
-function getConfig(): ModelConfig {
-  const apiKey = process.env.DEEPSEEK_API_KEY
-  if (!apiKey) throw new Error('DEEPSEEK_API_KEY 未配置')
-  return {
-    apiKey,
-    baseUrl: (process.env.MODEL_BASE_URL ?? 'https://api.deepseek.com').replace(/\/$/, ''),
-    model: process.env.MODEL_NAME ?? 'deepseek-v4-flash',
-  }
-}
-
 export interface SourceDocument {
   fileName: string
   role: 'prd' | 'interface'
@@ -64,7 +49,7 @@ export interface SourceDocument {
 }
 
 export async function analyzePrd(documents: SourceDocument[]): Promise<{ result: PrdAnalysis; model: string }> {
-  const config = getConfig()
+  const config = getModelConfig()
   let lastError: Error | null = null
   const documentText = documents.map(document => {
     const roleName = document.role === 'prd' ? '主 PRD' : '补充接口/技术文档'
@@ -111,7 +96,7 @@ export async function analyzePrd(documents: SourceDocument[]): Promise<{ result:
 }
 
 export async function generateAutomationPlan(targetUrl: string, testCases: PrdAnalysis['requirements'][number]['testCases']): Promise<AutomationPlan> {
-  const config = getConfig()
+  const config = getModelConfig()
   const prompt = `你是 Playwright 自动化测试规划器。将测试用例转换为严格 JSON 的受控步骤，不输出 JavaScript。
 允许动作只有：
 - {"action":"goto","path":"/相对路径"}
