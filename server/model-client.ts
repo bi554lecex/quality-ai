@@ -44,6 +44,20 @@ export class ResponsesModelClient {
       .filter(message => message.role === 'system')
       .map(message => message.content)
       .join('\n\n')
+    const responseInput = input.messages
+      .filter(message => message.role !== 'system')
+      .map(message => ({ role: message.role, content: message.content }))
+    let lastUserMessageIndex = -1
+    responseInput.forEach((message, index) => {
+      if (message.role === 'user') lastUserMessageIndex = index
+    })
+    const jsonModeInstruction = 'Return only a valid json object.'
+    if (lastUserMessageIndex >= 0) {
+      const message = responseInput[lastUserMessageIndex]
+      responseInput[lastUserMessageIndex] = { ...message, content: `${message.content}\n\n${jsonModeInstruction}` }
+    } else {
+      responseInput.push({ role: 'user', content: jsonModeInstruction })
+    }
     const response = await this.fetchImpl(`${this.config.baseUrl}/responses`, {
       method: 'POST',
       headers: {
@@ -55,9 +69,7 @@ export class ResponsesModelClient {
       body: JSON.stringify({
         model: this.config.model,
         instructions: instructions || undefined,
-        input: input.messages
-          .filter(message => message.role !== 'system')
-          .map(message => ({ role: message.role, content: message.content })),
+        input: responseInput,
         text: { format: { type: 'json_object' } },
         max_output_tokens: input.maxOutputTokens,
         store: false,

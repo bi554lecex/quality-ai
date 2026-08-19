@@ -18,9 +18,10 @@ test('sends an OpenAI Responses request with coding client attribution', async (
   const headers = new Headers(request?.init?.headers)
   assert.equal(headers.get('user-agent'), 'codex_cli_rs/test')
   assert.equal(headers.get('originator'), 'codex_cli_rs')
-  const body = JSON.parse(String(request?.init?.body)) as { instructions: string; input: Array<{ role: string }>; max_output_tokens: number; temperature?: number }
+  const body = JSON.parse(String(request?.init?.body)) as { instructions: string; input: Array<{ role: string; content: string }>; max_output_tokens: number; temperature?: number }
   assert.equal(body.instructions, 'JSON')
   assert.equal(body.input[0].role, 'user')
+  assert.match(body.input[0].content, /\bjson\b/)
   assert.equal(body.max_output_tokens, 100)
   assert.equal(body.temperature, undefined)
 })
