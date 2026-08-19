@@ -108,6 +108,7 @@ export interface TestEnvironment {
   id: string
   name: string
   baseUrl: string
+  targetUrl: string
   hasStorageState: boolean
   createdAt: string
   updatedAt: string

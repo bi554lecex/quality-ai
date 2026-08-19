@@ -133,6 +133,11 @@ export class TestAgent {
         state.projectContextRequests += 1
         projectContexts.push(projectContext)
         trajectory.push({ iteration, snapshotId: snapshot.snapshotId, decision, observation: summarizeSnapshot(snapshot), projectContext })
+        try {
+          snapshot = await this.observer.observe(page)
+        } catch (error) {
+          return this.result('failed', `源码上下文返回后页面重观测失败：${error instanceof Error ? error.message : String(error)}`, state, trajectory, screenshots)
+        }
         continue
       }
 

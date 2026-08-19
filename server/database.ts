@@ -64,6 +64,26 @@ for (const [name, definition] of [
   if (!executionColumns.some(column => column.name === name)) database.exec(`ALTER TABLE executions ADD COLUMN ${name} ${definition}`)
 }
 
+const environmentColumns = database.prepare('PRAGMA table_info(test_environments)').all() as Array<{ name: string }>
+if (!environmentColumns.some(column => column.name === 'target_url')) {
+  database.exec('ALTER TABLE test_environments ADD COLUMN target_url TEXT')
+}
+database.exec(`
+  UPDATE test_environments
+  SET target_url = COALESCE(
+    (
+      SELECT json_extract(executions.result_json, '$.targetUrl')
+      FROM executions
+      WHERE executions.environment_id = test_environments.id
+        AND rtrim(json_extract(executions.result_json, '$.targetUrl'), '/') != rtrim(test_environments.base_url, '/')
+      ORDER BY executions.created_at DESC
+      LIMIT 1
+    ),
+    test_environments.base_url
+  )
+  WHERE target_url IS NULL OR target_url = ''
+`)
+
 export function saveAnalysis(input: {
   id: string
   fileName: string
@@ -229,21 +249,30 @@ export function getAutomationPlanById(id: string): SavedAutomationPlan | null {
 
 function mapEnvironment(row: Record<string, string> | undefined): TestEnvironment | null {
   if (!row) return null
-  return { id: row.id, name: row.name, baseUrl: row.base_url, hasStorageState: Boolean(row.storage_state_path), createdAt: row.created_at, updatedAt: row.updated_at }
+  return {
+    id: row.id,
+    name: row.name,
+    baseUrl: row.base_url,
+    targetUrl: row.target_url || row.base_url,
+    hasStorageState: Boolean(row.storage_state_path),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  }
 }
 
-export function saveEnvironment(input: { id?: string; name: string; baseUrl: string }): TestEnvironment {
+export function saveEnvironment(input: { id?: string; name: string; baseUrl: string; targetUrl: string }): TestEnvironment {
   const now = new Date().toISOString()
   const id = input.id ?? randomUUID()
-  database.prepare(`INSERT INTO test_environments (id,name,base_url,created_at,updated_at) VALUES (?,?,?,?,?)
-    ON CONFLICT(id) DO UPDATE SET name=excluded.name,base_url=excluded.base_url,updated_at=excluded.updated_at`)
-    .run(id, input.name, input.baseUrl, now, now)
+  database.prepare(`INSERT INTO test_environments (id,name,base_url,target_url,created_at,updated_at) VALUES (?,?,?,?,?,?)
+    ON CONFLICT(id) DO UPDATE SET name=excluded.name,base_url=excluded.base_url,target_url=excluded.target_url,updated_at=excluded.updated_at`)
+    .run(id, input.name, input.baseUrl, input.targetUrl, now, now)
   const environment = getEnvironmentById(id)
   if (!environment) throw new Error('测试环境保存失败')
   return mapEnvironment({
     id: environment.id,
     name: environment.name,
     base_url: environment.baseUrl,
+    target_url: environment.targetUrl,
     storage_state_path: environment.storageStatePath ?? '',
     created_at: environment.createdAt,
     updated_at: environment.updatedAt,
@@ -258,6 +287,7 @@ export function setEnvironmentStorageState(id: string, path: string): TestEnviro
     id: environment.id,
     name: environment.name,
     base_url: environment.baseUrl,
+    target_url: environment.targetUrl,
     storage_state_path: environment.storageStatePath ?? '',
     created_at: environment.createdAt,
     updated_at: environment.updatedAt,

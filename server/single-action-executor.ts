@@ -45,6 +45,10 @@ export class SingleActionExecutor {
       let screenshotPath: string | undefined
       if (action.action === 'goto') {
         const destination = new URL(action.path, this.baseUrl)
+        const initialTarget = new URL(this.baseUrl)
+        if (destination.origin === initialTarget.origin && !destination.search && initialTarget.search) {
+          destination.search = initialTarget.search
+        }
         await this.page.goto(destination.href, { waitUntil: 'domcontentloaded', timeout: 30_000 })
       } else if (action.action === 'click') {
         await this.registry.resolve(snapshotId, action.elementRef).click({ timeout: 10_000 })

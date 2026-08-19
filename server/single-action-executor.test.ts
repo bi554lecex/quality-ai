@@ -59,3 +59,29 @@ test('rejects unsafe keyboard keys and arbitrary assertion attributes', () => {
     action: 'expectAttribute', elementRef: 'e1', name: 'onclick', value: 'attack()', assertionId: 'safe',
   }).success, false)
 })
+
+test('preserves initial target query parameters when navigating within the same origin', async () => {
+  const browser = await chromium.launch({ headless: true })
+  try {
+    const page = await browser.newPage()
+    await page.route('http://target.test/**', route => route.fulfill({
+      status: 200,
+      contentType: 'text/html',
+      body: '<button>目标页面</button>',
+    }))
+    const targetUrl = 'http://target.test/lvworkbench/mock-exam/?workcode=V001&username=tester'
+    await page.goto(targetUrl)
+    const observer = new PageObserver()
+    const snapshot = await observer.observe(page)
+    const executor = new SingleActionExecutor(page, observer.registry, targetUrl, tmpdir())
+
+    const result = await executor.execute(snapshot.snapshotId, {
+      action: 'goto', path: '/lvworkbench/mock-exam-batch-manage/',
+    })
+
+    assert.equal(result.ok, true)
+    assert.equal(page.url(), 'http://target.test/lvworkbench/mock-exam-batch-manage/?workcode=V001&username=tester')
+  } finally {
+    await browser.close()
+  }
+})

@@ -240,7 +240,7 @@ async function loadSavedAnalysis() {
       if (saved) {
         environment.value = saved
         environmentName.value = saved.name
-        targetUrl.value = saved.baseUrl
+        targetUrl.value = saved.targetUrl
       }
     }
     if (historyResponse.ok) analysisHistory.value = (await historyResponse.json() as { analyses: AnalysisSummary[] }).analyses
@@ -324,7 +324,7 @@ async function verifyPlaywright() {
 async function persistEnvironment() {
   const response = await fetch('/api/environments', {
     method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ id: environment.value?.id, name: environmentName.value, baseUrl: targetUrl.value }),
+    body: JSON.stringify({ id: environment.value?.id, name: environmentName.value, targetUrl: targetUrl.value }),
   })
   const payload = await response.json() as { environment?: TestEnvironment; error?: string }
   if (!response.ok || !payload.environment) throw new Error(payload.error ?? '测试环境保存失败')

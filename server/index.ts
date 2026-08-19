@@ -145,12 +145,14 @@ const server = createServer(async (request, response) => {
     if (request.method === 'POST' && request.url === '/api/environments') {
       const body = await readJson(request)
       const name = typeof body.name === 'string' ? body.name.trim() : ''
-      const baseUrl = typeof body.baseUrl === 'string' ? body.baseUrl.trim() : ''
+      const targetUrl = typeof body.targetUrl === 'string'
+        ? body.targetUrl.trim()
+        : typeof body.baseUrl === 'string' ? body.baseUrl.trim() : ''
       const id = typeof body.id === 'string' ? body.id : undefined
-      if (!name || !baseUrl) return json(response, 400, { error: '环境名称和地址不能为空' })
-      const url = new URL(baseUrl)
+      if (!name || !targetUrl) return json(response, 400, { error: '环境名称和测试页面地址不能为空' })
+      const url = new URL(targetUrl)
       if (!['http:', 'https:'].includes(url.protocol)) return json(response, 400, { error: '环境地址只允许 HTTP 或 HTTPS' })
-      return json(response, 200, { environment: saveEnvironment({ id, name, baseUrl: url.origin }) })
+      return json(response, 200, { environment: saveEnvironment({ id, name, baseUrl: url.origin, targetUrl: url.href }) })
     }
 
     const stateMatch = request.url?.match(/^\/api\/environments\/([a-f0-9-]+)\/storage-state$/i)

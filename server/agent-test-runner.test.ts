@@ -33,12 +33,17 @@ test('runs a browser Agent with project context, DOM re-observation and required
     async inspectFiles() { return { projectId: 'test', reason: 'test', files: [], totalCharacters: 0 } },
   }
   let turn = 0
+  let firstSnapshotId = ''
   const decisionProvider: AgentDecisionProvider = {
     async decide({ snapshot, projectContexts }) {
       turn += 1
-      if (turn === 1) return { type: 'need_project_context', request: { operation: 'search_source', query: '保存成功', scopes: ['page'] }, reason: '确认成功提示' }
+      if (turn === 1) {
+        firstSnapshotId = snapshot.snapshotId
+        return { type: 'need_project_context', request: { operation: 'search_source', query: '保存成功', scopes: ['page'] }, reason: '确认成功提示' }
+      }
       if (turn === 2) {
         assert.equal(projectContexts.length, 1)
+        assert.notEqual(snapshot.snapshotId, firstSnapshotId)
         return { type: 'action', snapshotId: snapshot.snapshotId, action: { action: 'fill', elementRef: snapshot.elements.find(item => item.name === '学生姓名')?.ref ?? '', value: '张三' }, reason: '填写姓名' }
       }
       if (turn === 3) return { type: 'action', snapshotId: snapshot.snapshotId, action: { action: 'click', elementRef: snapshot.elements.find(item => item.name === '保存')?.ref ?? '' }, reason: '保存' }
