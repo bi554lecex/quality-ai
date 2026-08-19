@@ -3,7 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import type { AgentDecision, AnalysisSummary, ExecutionRecord, PrdAnalysis, SavedAnalysis, SavedAutomationPlan, TestEnvironment } from '../shared/contracts'
 
 type Tab = 'overview' | 'states' | 'questions' | 'cases'
-type WorkspaceView = 'version' | 'executions'
+type WorkspaceView = 'version' | 'requirements' | 'cases' | 'executions' | 'memory'
 interface ProjectOption { id: string; name: string; connected: boolean; targetOrigins: string[]; branch?: string; error?: string }
 
 const sampleAnalysis: PrdAnalysis = {
@@ -79,6 +79,7 @@ const workspaceView = ref<WorkspaceView>('version')
 const executionHistory = ref<ExecutionRecord[]>([])
 const selectedExecutionId = ref('')
 const executionFilter = ref<'all' | 'passed' | 'failed' | 'blocked'>('all')
+const caseAssetFilter = ref<'all' | 'ready' | 'blocked'>('all')
 const projects = ref<ProjectOption[]>([])
 const projectId = ref('')
 
@@ -106,12 +107,31 @@ const blockedSelectedCaseKeys = computed(() => selectedCaseKeys.value.filter(key
 const selectedProject = computed(() => projects.value.find(project => project.id === projectId.value) ?? null)
 const targetOrigin = computed(() => { try { return new URL(targetUrl.value).origin } catch { return '' } })
 const matchingProjects = computed(() => projects.value.filter(project => project.connected && (!project.targetOrigins.length || project.targetOrigins.includes(targetOrigin.value))))
+const requirementAssets = computed(() => requirements.value.map((item, index) => ({ item, index, code: requirementCode(index) })))
+const caseAssets = computed(() => requirements.value.flatMap((item, requirementIndex) => item.testCases.map((testCase, caseIndex) => ({
+  item: testCase,
+  requirementTitle: item.title,
+  requirementIndex,
+  caseIndex,
+  key: `${requirementIndex}-TC-${caseIndex}`,
+  code: `${requirementCode(requirementIndex)} / TC-${String(caseIndex + 1).padStart(3, '0')}`,
+}))))
+const filteredCaseAssets = computed(() => caseAssetFilter.value === 'all' ? caseAssets.value : caseAssets.value.filter(asset => caseAssetFilter.value === 'blocked' ? asset.item.blockedByQuestion : !asset.item.blockedByQuestion))
+const memoryRules = computed(() => requirements.value.flatMap((item, requirementIndex) => item.businessRules.map(rule => ({ ...rule, requirementTitle: item.title, requirementIndex }))))
+const memoryFailures = computed(() => executionHistory.value.filter(item => item.status !== 'passed' && item.error).slice(0, 20))
+const memorySourceUses = computed(() => executionHistory.value.flatMap(execution => execution.agent?.trajectory.flatMap(item => item.decision.type === 'need_project_context' ? [{ execution, item }] : []) ?? []).slice(0, 20))
+const memoryCount = computed(() => memoryRules.value.length + memoryFailures.value.length + memorySourceUses.value.length)
+const workspaceLabel = computed(() => ({ version: '版本中心', requirements: '需求中心', cases: '用例资产', executions: '执行中心', memory: '质量记忆' })[workspaceView.value])
 
 function requirementCode(index: number) { return `REQ-${String(index + 1).padStart(3, '0')}` }
 function questionKey(index: number) { return `${activeRequirement.value}-Q-${index}` }
 function caseKey(index: number) { return `${activeRequirement.value}-TC-${index}` }
 function caseCode(index: number) { return `TC-${String(index + 1).padStart(3, '0')}` }
 function chooseRequirement(index: number) { activeRequirement.value = index; activeTab.value = 'overview' }
+function openRequirement(index: number) { chooseRequirement(index); workspaceView.value = 'version' }
+function openCaseAsset(requirementIndex: number) { activeRequirement.value = requirementIndex; activeTab.value = 'cases'; workspaceView.value = 'version' }
+function openExecution(id: string) { selectedExecutionId.value = id; workspaceView.value = 'executions' }
+function toggleCaseAsset(key: string) { selectedCases.value[key] = !selectedCases.value[key]; void saveCurrentReview() }
 function toast(message: string) { notice.value = message; window.setTimeout(() => notice.value = '', 4500) }
 function formatVersionTime(value: string) { return new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(value)) }
 function targetHost(value: string) { try { return new URL(value).host } catch { return value } }
@@ -476,13 +496,13 @@ onMounted(loadSavedAnalysis)
     <aside class="sidebar">
       <div class="brand"><span>知</span><div><strong>知测 AI</strong><small>测试工作台</small></div></div>
       <nav>
-        <button :class="{active:workspaceView==='version'}" @click="workspaceView='version'"><i>版</i>版本中心</button><button><i>需</i>需求中心<em>{{ requirements.length }}</em></button><button><i>例</i>用例资产</button><button :class="{active:workspaceView==='executions'}" @click="workspaceView='executions'"><i>执</i>执行中心<em>{{ executionHistory.length }}</em></button><button><i>忆</i>质量记忆</button>
+        <button :class="{active:workspaceView==='version'}" @click="workspaceView='version'"><i>版</i>版本中心</button><button :class="{active:workspaceView==='requirements'}" @click="workspaceView='requirements'"><i>需</i>需求中心<em>{{ requirements.length }}</em></button><button :class="{active:workspaceView==='cases'}" @click="workspaceView='cases'"><i>例</i>用例资产<em>{{ totalCases }}</em></button><button :class="{active:workspaceView==='executions'}" @click="workspaceView='executions'"><i>执</i>执行中心<em>{{ executionHistory.length }}</em></button><button :class="{active:workspaceView==='memory'}" @click="workspaceView='memory'"><i>忆</i>质量记忆<em>{{ memoryCount }}</em></button>
       </nav>
       <div class="side-bottom"><div class="memory"><b :class="{offline:!apiConfigured}"></b><p><strong>{{ apiConfigured ? '公司模型已连接' : '模型服务未连接' }}</strong><small>{{ savedAnalysis ? `${savedAnalysis.model} · 已持久化` : '当前显示示例数据' }}</small></p></div><div class="user"><span>TX</span><p><strong>测试小组</strong><small>前端质量空间</small></p></div></div>
     </aside>
 
     <main>
-      <header class="topbar"><div v-if="workspaceView==='version'" class="version-switcher"><span>版本中心</span><b>/</b><button :disabled="switchingVersion" @click="versionMenuOpen=!versionMenuOpen"><strong>{{ analysis.versionName }}</strong><i>⌄</i></button><div v-if="versionMenuOpen" class="version-menu"><header><strong>版本记录</strong><span>{{ analysisHistory.length }} 个版本</span></header><button v-for="item in analysisHistory" :key="item.id" :class="{active:item.id===savedAnalysis?.id}" @click="switchVersion(item.id)"><i>{{ item.id===savedAnalysis?.id ? '✓' : '版' }}</i><span><strong>{{ item.productName }} · {{ item.versionName }}</strong><small>{{ formatVersionTime(item.createdAt) }} · {{ item.requirementCount }} 项需求 · {{ item.testCaseCount }} 条用例</small><em><b :style="{width:`${item.questionCount ? Math.round(item.confirmedQuestionCount/item.questionCount*100) : 100}%`}"></b></em></span></button><p v-if="!analysisHistory.length">导入第一份 PRD 后会形成版本记录</p></div></div><div v-else><span>执行中心</span><b>/</b><strong>自动化执行记录</strong></div><label v-if="workspaceView==='version'" :class="['import',{disabled:analyzing}]"><input :disabled="analyzing" multiple type="file" accept=".pdf,.md,.markdown,.txt,application/pdf" @change="importPrd" />{{ analyzing ? 'AI 解析中…' : '＋ 导入需求材料' }}</label><button v-else class="back-version" @click="workspaceView='version'">返回版本中心</button></header>
+      <header class="topbar"><div v-if="workspaceView==='version'" class="version-switcher"><span>版本中心</span><b>/</b><button :disabled="switchingVersion" @click="versionMenuOpen=!versionMenuOpen"><strong>{{ analysis.versionName }}</strong><i>⌄</i></button><div v-if="versionMenuOpen" class="version-menu"><header><strong>版本记录</strong><span>{{ analysisHistory.length }} 个版本</span></header><button v-for="item in analysisHistory" :key="item.id" :class="{active:item.id===savedAnalysis?.id}" @click="switchVersion(item.id)"><i>{{ item.id===savedAnalysis?.id ? '✓' : '版' }}</i><span><strong>{{ item.productName }} · {{ item.versionName }}</strong><small>{{ formatVersionTime(item.createdAt) }} · {{ item.requirementCount }} 项需求 · {{ item.testCaseCount }} 条用例</small><em><b :style="{width:`${item.questionCount ? Math.round(item.confirmedQuestionCount/item.questionCount*100) : 100}%`}"></b></em></span></button><p v-if="!analysisHistory.length">导入第一份 PRD 后会形成版本记录</p></div></div><div v-else><span>{{ workspaceLabel }}</span><b>/</b><strong>{{ analysis.versionName }}</strong></div><label v-if="workspaceView==='version'" :class="['import',{disabled:analyzing}]"><input :disabled="analyzing" multiple type="file" accept=".pdf,.md,.markdown,.txt,application/pdf" @change="importPrd" />{{ analyzing ? 'AI 解析中…' : '＋ 导入需求材料' }}</label><button v-else class="back-version" @click="workspaceView='version'">返回版本中心</button></header>
       <div class="workspace">
         <template v-if="workspaceView==='version'">
         <section class="heading"><div><small><i></i>{{ savedAnalysis ? `真实解析 · ${savedAnalysis.provider}` : '示例模式 · 等待导入 PRD' }}</small><h1>{{ analysis.productName }} · {{ analysis.versionName }}</h1><p>{{ analysis.overview }}</p></div><div><button>分享评审</button><button class="primary" @click="activeTab='cases';toast('已切换到当前测试用例')">查看测试建议</button></div></section>
@@ -505,7 +525,7 @@ onMounted(loadSavedAnalysis)
           </section>
         </section>
         </template>
-        <template v-else>
+        <template v-else-if="workspaceView==='executions'">
           <section class="heading execution-heading"><div><small><i></i>Playwright 真实浏览器结果</small><h1>自动化执行中心</h1><p>查看固定计划与动态 Agent 的步骤结果、决策轨迹、源码上下文和证据文件。</p></div><div><button class="primary" @click="workspaceView='version';activeTab='cases'">发起新执行</button></div></section>
           <section class="metrics execution-metrics"><article><i class="purple">执</i><p><span>执行总数</span><strong>{{ executionHistory.length }}</strong><small>本地持久化记录</small></p></article><article><i class="green">✓</i><p><span>通过</span><strong>{{ executionHistory.filter(item=>item.status==='passed').length }}</strong><small>浏览器执行成功</small></p></article><article><i class="amber">!</i><p><span>未完成</span><strong>{{ executionHistory.filter(item=>item.status!=='passed').length }}</strong><small>{{ executionHistory.filter(item=>item.status==='failed').length }} 失败 · {{ executionHistory.filter(item=>item.status==='blocked').length }} 受阻</small></p></article><article><i class="blue">率</i><p><span>通过率</span><strong>{{ executionPassRate }}%</strong><small>全部执行记录</small></p></article></section>
           <div class="execution-filters"><button :class="{active:executionFilter==='all'}" @click="executionFilter='all'">全部 {{ executionHistory.length }}</button><button :class="{active:executionFilter==='passed'}" @click="executionFilter='passed'">已通过</button><button :class="{active:executionFilter==='failed'}" @click="executionFilter='failed'">失败</button><button :class="{active:executionFilter==='blocked'}" @click="executionFilter='blocked'">受阻</button></div>
@@ -526,6 +546,22 @@ onMounted(loadSavedAnalysis)
             </article>
             <article v-else class="execution-detail empty">执行固定计划或动态 Agent 后，这里会展示详细报告。</article>
           </section>
+        </template>
+        <template v-else-if="workspaceView==='requirements'">
+          <section class="heading hub-heading"><div><small><i></i>{{ analysis.versionName }}</small><h1>需求中心</h1><p>集中查看当前版本的需求风险、规则、页面状态和测试准备度。</p></div><div><button class="primary" @click="workspaceView='version'">返回版本评审</button></div></section>
+          <section class="metrics"><article><i class="purple">需</i><p><span>需求总数</span><strong>{{ requirements.length }}</strong><small>当前版本</small></p></article><article><i class="amber">高</i><p><span>高风险</span><strong>{{ requirements.filter(item=>item.risk==='高风险').length }}</strong><small>优先评审</small></p></article><article><i class="blue">规</i><p><span>业务规则</span><strong>{{ memoryRules.length }}</strong><small>具备 PRD 依据</small></p></article><article><i class="green">态</i><p><span>页面状态</span><strong>{{ requirements.reduce((sum,item)=>sum+item.pageStates.length,0) }}</strong><small>交互状态模型</small></p></article></section>
+          <section class="requirement-hub"><article v-for="asset in requirementAssets" :key="asset.code"><header><span>{{ asset.code }}</span><b :class="asset.item.risk==='高风险'?'high':asset.item.risk==='中风险'?'medium':'low'">{{ asset.item.risk }}</b></header><h2>{{ asset.item.title }}</h2><p>{{ asset.item.summary }}</p><div><span>规则 {{ asset.item.businessRules.length }}</span><span>状态 {{ asset.item.pageStates.length }}</span><span>问题 {{ asset.item.questions.length }}</span><span>用例 {{ asset.item.testCases.length }}</span></div><footer><small>{{ asset.item.riskReason }}</small><button @click="openRequirement(asset.index)">查看需求详情 →</button></footer></article></section>
+        </template>
+        <template v-else-if="workspaceView==='cases'">
+          <section class="heading hub-heading"><div><small><i></i>{{ analysis.versionName }}</small><h1>用例资产</h1><p>跨需求查看当前版本全部用例，维护执行选择并快速进入测试配置。</p></div><div><button class="primary" @click="workspaceView='version';activeTab='cases'">进入执行配置</button></div></section>
+          <section class="metrics"><article><i class="purple">例</i><p><span>用例总数</span><strong>{{ caseAssets.length }}</strong><small>当前版本</small></p></article><article><i class="green">✓</i><p><span>可执行</span><strong>{{ caseAssets.filter(asset=>!asset.item.blockedByQuestion).length }}</strong><small>规则已明确</small></p></article><article><i class="amber">?</i><p><span>待确认</span><strong>{{ caseAssets.filter(asset=>asset.item.blockedByQuestion).length }}</strong><small>暂不进入 Agent</small></p></article><article><i class="blue">选</i><p><span>已选择</span><strong>{{ selectedCaseKeys.length }}</strong><small>将用于自动化</small></p></article></section>
+          <div class="execution-filters"><button :class="{active:caseAssetFilter==='all'}" @click="caseAssetFilter='all'">全部</button><button :class="{active:caseAssetFilter==='ready'}" @click="caseAssetFilter='ready'">可执行</button><button :class="{active:caseAssetFilter==='blocked'}" @click="caseAssetFilter='blocked'">待确认</button></div>
+          <section class="case-assets"><article v-for="asset in filteredCaseAssets" :key="asset.key"><label><input :checked="Boolean(selectedCases[asset.key])" type="checkbox" @change="toggleCaseAsset(asset.key)"/><span>{{ asset.code }}</span></label><div><header><strong>{{ asset.item.title }}</strong><b :class="asset.item.priority.toLowerCase()">{{ asset.item.priority }}</b><em :class="asset.item.blockedByQuestion?'blocked':'ready'">{{ asset.item.blockedByQuestion ? '待确认' : '可执行' }}</em></header><p>{{ asset.requirementTitle }}</p><small>步骤：{{ asset.item.steps.join(' → ') }}</small><footer><span>预期：{{ asset.item.expectedResult }}</span><button @click="openCaseAsset(asset.requirementIndex)">查看并执行 →</button></footer></div></article><div v-if="!filteredCaseAssets.length" class="empty">当前筛选条件下暂无用例</div></section>
+        </template>
+        <template v-else>
+          <section class="heading hub-heading"><div><small><i></i>由真实评审与执行自动沉淀</small><h1>质量记忆</h1><p>汇总已提取业务规则、历史失败和 Agent 使用过的源码线索，避免后续测试重复摸索。</p></div><div><button class="primary" @click="workspaceView='version'">返回当前版本</button></div></section>
+          <section class="metrics"><article><i class="purple">规</i><p><span>规则记忆</span><strong>{{ memoryRules.length }}</strong><small>来源于当前 PRD</small></p></article><article><i class="amber">!</i><p><span>失败记忆</span><strong>{{ memoryFailures.length }}</strong><small>失败与受阻记录</small></p></article><article><i class="blue">源</i><p><span>源码线索</span><strong>{{ memorySourceUses.length }}</strong><small>Agent 按需读取</small></p></article><article><i class="green">版</i><p><span>历史版本</span><strong>{{ analysisHistory.length }}</strong><small>已持久化分析</small></p></article></section>
+          <section class="memory-grid"><article><header><h2>业务规则</h2><span>{{ memoryRules.length }}</span></header><button v-for="(rule,index) in memoryRules" :key="`${rule.requirementIndex}-${index}`" @click="openRequirement(rule.requirementIndex)"><i>规</i><p><strong>{{ rule.description }}</strong><small>{{ rule.requirementTitle }} · {{ rule.evidence }}</small></p></button><div v-if="!memoryRules.length" class="empty">导入 PRD 后自动沉淀业务规则</div></article><article><header><h2>失败与受阻</h2><span>{{ memoryFailures.length }}</span></header><button v-for="failure in memoryFailures" :key="failure.id" @click="openExecution(failure.id)"><i class="warning">!</i><p><strong>{{ failure.name }}</strong><small>{{ executionStatusText(failure.status) }} · {{ failure.error }}</small></p></button><div v-if="!memoryFailures.length" class="empty">暂无失败或受阻经验</div></article><article><header><h2>源码使用线索</h2><span>{{ memorySourceUses.length }}</span></header><button v-for="(source,index) in memorySourceUses" :key="`${source.execution.id}-${index}`" @click="openExecution(source.execution.id)"><i class="source">源</i><p><strong>{{ decisionTitle(source.item.decision) }}</strong><small>{{ source.execution.name }} · {{ projectContextSummary(source.item.projectContext) }}</small></p></button><div v-if="!memorySourceUses.length" class="empty">Agent 请求源码后会记录在这里</div></article></section>
         </template>
       </div>
     </main>
