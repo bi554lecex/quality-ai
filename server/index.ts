@@ -10,6 +10,7 @@ import { generateAutomationPlan } from './model'
 import { automationPlanSchema, storageStateSchema } from '../shared/contracts'
 import { getProjectProvider, getProjectProviderRegistry } from './project-knowledge/registry'
 import type { SourceScope } from './project-knowledge/types'
+import { inspectTargetPage } from './page-observer-runner'
 
 const port = Number(process.env.API_PORT ?? 8787)
 const maxBodySize = 10 * 1024 * 1024
@@ -185,6 +186,21 @@ const server = createServer(async (request, response) => {
 
     if (request.method === 'GET' && request.url === '/api/automation/plans/latest') {
       return json(response, 200, { automationPlan: getLatestAutomationPlan() })
+    }
+
+    if (request.method === 'POST' && request.url === '/api/automation/observe') {
+      const body = await readJson(request)
+      const targetUrl = typeof body.targetUrl === 'string' ? body.targetUrl.trim() : ''
+      const environmentId = typeof body.environmentId === 'string' ? body.environmentId : undefined
+      if (!targetUrl) return json(response, 400, { error: '观察页面地址不能为空' })
+      const environment = environmentId ? getEnvironmentById(environmentId) : null
+      if (environmentId && !environment) return json(response, 404, { error: '测试环境不存在' })
+      const target = new URL(targetUrl)
+      if (environment && target.origin !== new URL(environment.baseUrl).origin) {
+        return json(response, 400, { error: '观察页面与测试环境 Origin 不一致' })
+      }
+      const snapshot = await inspectTargetPage(target.href, environment?.storageStatePath)
+      return json(response, 200, { snapshot })
     }
 
     if (request.method === 'POST' && request.url === '/api/automation/generate') {

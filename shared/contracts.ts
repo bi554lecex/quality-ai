@@ -149,3 +149,54 @@ export interface ExecutionRecord extends ExecutionResult {
   environmentName?: string
   rerunOf?: string
 }
+
+export const semanticElementSchema = z.object({
+  ref: z.string().regex(/^e\d+$/),
+  tag: z.string().min(1),
+  role: z.string().min(1),
+  name: z.string(),
+  label: z.string().optional(),
+  placeholder: z.string().optional(),
+  value: z.string().optional(),
+  text: z.string().optional(),
+  visible: z.boolean(),
+  enabled: z.boolean(),
+  checked: z.boolean().optional(),
+  selected: z.boolean().optional(),
+  expanded: z.boolean().optional(),
+  required: z.boolean().optional(),
+  container: z.string().optional(),
+})
+
+export const pageSnapshotSchema = z.object({
+  snapshotId: z.string().uuid(),
+  observedAt: z.string().datetime(),
+  url: z.string(),
+  title: z.string(),
+  loading: z.boolean(),
+  elements: z.array(semanticElementSchema),
+  dialogs: z.array(z.object({
+    ref: z.string().regex(/^d\d+$/),
+    title: z.string(),
+    modal: z.boolean(),
+  })),
+  tables: z.array(z.object({
+    ref: z.string().regex(/^t\d+$/),
+    name: z.string(),
+    columns: z.array(z.string()),
+    rowCount: z.number().int().nonnegative(),
+    sampleRows: z.array(z.array(z.string())),
+  })),
+  messages: z.array(z.object({
+    type: z.enum(['alert', 'status', 'error', 'message', 'notification']),
+    text: z.string().min(1),
+  })),
+  stats: z.object({
+    discoveredElements: z.number().int().nonnegative(),
+    returnedElements: z.number().int().nonnegative(),
+    truncated: z.boolean(),
+  }),
+})
+
+export type SemanticElement = z.infer<typeof semanticElementSchema>
+export type PageSnapshot = z.infer<typeof pageSnapshotSchema>
