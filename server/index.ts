@@ -13,17 +13,11 @@ import type { SourceScope } from './project-knowledge/types'
 import { inspectTargetPage } from './page-observer-runner'
 import { buildAgentTestGoal } from './agent-goal'
 import { runAgentTest } from './agent-test-runner'
+import { parseSourceDocuments } from './source-documents'
 
 const port = Number(process.env.API_PORT ?? 8787)
-const maxBodySize = 10 * 1024 * 1024
+const maxBodySize = 30 * 1024 * 1024
 const sourceScopes = new Set<SourceScope>(['route', 'page', 'component', 'api'])
-
-function sanitizePrd(content: string) {
-  return content
-    .replace(/data:image\/[^;]+;base64,[A-Za-z0-9+/=]+/g, '[图片数据已省略]')
-    .replace(/\n{4,}/g, '\n\n\n')
-    .trim()
-}
 
 function json(response: ServerResponse, status: number, body: unknown) {
   response.writeHead(status, {
@@ -39,7 +33,7 @@ async function readJson(request: IncomingMessage) {
   for await (const chunk of request) {
     const buffer = Buffer.from(chunk)
     size += buffer.length
-    if (size > maxBodySize) throw new Error('需求材料合计不能超过 10MB')
+    if (size > maxBodySize) throw new Error('单次请求不能超过 30MB')
     chunks.push(buffer)
   }
   return JSON.parse(Buffer.concat(chunks).toString('utf8')) as Record<string, unknown>
@@ -287,18 +281,12 @@ const server = createServer(async (request, response) => {
       const rawFiles = Array.isArray(body.files)
         ? body.files
         : [{ fileName: body.fileName, content: body.content, role: 'prd' }]
-      if (!rawFiles.length || rawFiles.length > 5) return json(response, 400, { error: '一次请选择 1-5 份需求材料' })
-      const documents = rawFiles.map((item, index) => {
-        if (!item || typeof item !== 'object') throw new Error(`第 ${index + 1} 份材料格式错误`)
-        const value = item as Record<string, unknown>
-        const fileName = typeof value.fileName === 'string' ? value.fileName.trim() : ''
-        const content = typeof value.content === 'string' ? sanitizePrd(value.content) : ''
-        const role = value.role === 'interface' ? 'interface' as const : 'prd' as const
-        if (!fileName || !content) throw new Error(`第 ${index + 1} 份材料内容为空`)
-        if (!/\.(md|markdown|txt)$/i.test(fileName)) throw new Error('当前支持 Markdown 和纯文本材料')
-        return { fileName, content, role }
-      })
-      if (!documents.some(document => document.role === 'prd')) return json(response, 400, { error: '至少需要一份主 PRD' })
+      let documents
+      try {
+        documents = await parseSourceDocuments(rawFiles)
+      } catch (error) {
+        return json(response, 400, { error: error instanceof Error ? error.message : '需求材料解析失败' })
+      }
 
       const { result, model } = await analyzePrd(documents)
       const fileNames = documents.map(document => document.fileName)

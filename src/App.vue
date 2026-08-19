@@ -149,6 +149,15 @@ function prepareDocumentText(content: string) {
   return content.replace(/data:image\/[^;]+;base64,[A-Za-z0-9+/=]+/g, '[图片数据已省略]')
 }
 
+function arrayBufferToBase64(buffer: ArrayBuffer) {
+  const bytes = new Uint8Array(buffer)
+  let binary = ''
+  for (let offset = 0; offset < bytes.length; offset += 32_768) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + 32_768))
+  }
+  return window.btoa(binary)
+}
+
 function applyReview(analysisValue: SavedAnalysis) {
   confirmed.value = Object.fromEntries((analysisValue.review?.confirmedQuestions ?? []).map(key => [key, true]))
   selectedCases.value = Object.fromEntries((analysisValue.review?.selectedCases ?? []).map(key => [key, true]))
@@ -409,8 +418,18 @@ async function importPrd(event: Event) {
   const input = event.target as HTMLInputElement
   const files = Array.from(input.files ?? [])
   if (!files.length) return
-  if (files.some(file => !/\.(md|markdown|txt)$/i.test(file.name))) {
-    toast('当前支持 Markdown 和 TXT 文件')
+  if (files.some(file => !/\.(pdf|md|markdown|txt)$/i.test(file.name))) {
+    toast('当前支持 PDF、Markdown 和 TXT 文件')
+    input.value = ''
+    return
+  }
+  if (files.some(file => /\.pdf$/i.test(file.name) && file.size > 15 * 1024 * 1024)) {
+    toast('单个 PDF 不能超过 15MB')
+    input.value = ''
+    return
+  }
+  if (files.reduce((sum, file) => sum + file.size, 0) > 22 * 1024 * 1024) {
+    toast('单次上传的需求材料合计不能超过 22MB')
     input.value = ''
     return
   }
@@ -418,11 +437,15 @@ async function importPrd(event: Event) {
   analyzing.value = true
   notice.value = `正在联合解析 ${files.length} 份需求材料，请稍候…`
   try {
-    const documents = await Promise.all(files.map(async file => ({
+    const documents = await Promise.all(files.map(async file => /\.pdf$/i.test(file.name) ? {
+      fileName: file.name,
+      contentBase64: arrayBufferToBase64(await file.arrayBuffer()),
+      role: /接口|技术方案|api/i.test(file.name) ? 'interface' : 'prd',
+    } : {
       fileName: file.name,
       content: prepareDocumentText(await file.text()),
       role: /接口|技术方案|api/i.test(file.name) ? 'interface' : 'prd',
-    })))
+    }))
     const response = await fetch('/api/analyze', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -459,7 +482,7 @@ onMounted(loadSavedAnalysis)
     </aside>
 
     <main>
-      <header class="topbar"><div v-if="workspaceView==='version'" class="version-switcher"><span>版本中心</span><b>/</b><button :disabled="switchingVersion" @click="versionMenuOpen=!versionMenuOpen"><strong>{{ analysis.versionName }}</strong><i>⌄</i></button><div v-if="versionMenuOpen" class="version-menu"><header><strong>版本记录</strong><span>{{ analysisHistory.length }} 个版本</span></header><button v-for="item in analysisHistory" :key="item.id" :class="{active:item.id===savedAnalysis?.id}" @click="switchVersion(item.id)"><i>{{ item.id===savedAnalysis?.id ? '✓' : '版' }}</i><span><strong>{{ item.productName }} · {{ item.versionName }}</strong><small>{{ formatVersionTime(item.createdAt) }} · {{ item.requirementCount }} 项需求 · {{ item.testCaseCount }} 条用例</small><em><b :style="{width:`${item.questionCount ? Math.round(item.confirmedQuestionCount/item.questionCount*100) : 100}%`}"></b></em></span></button><p v-if="!analysisHistory.length">导入第一份 PRD 后会形成版本记录</p></div></div><div v-else><span>执行中心</span><b>/</b><strong>自动化执行记录</strong></div><label v-if="workspaceView==='version'" :class="['import',{disabled:analyzing}]"><input :disabled="analyzing" multiple type="file" accept=".md,.markdown,.txt" @change="importPrd" />{{ analyzing ? 'AI 解析中…' : '＋ 导入需求材料' }}</label><button v-else class="back-version" @click="workspaceView='version'">返回版本中心</button></header>
+      <header class="topbar"><div v-if="workspaceView==='version'" class="version-switcher"><span>版本中心</span><b>/</b><button :disabled="switchingVersion" @click="versionMenuOpen=!versionMenuOpen"><strong>{{ analysis.versionName }}</strong><i>⌄</i></button><div v-if="versionMenuOpen" class="version-menu"><header><strong>版本记录</strong><span>{{ analysisHistory.length }} 个版本</span></header><button v-for="item in analysisHistory" :key="item.id" :class="{active:item.id===savedAnalysis?.id}" @click="switchVersion(item.id)"><i>{{ item.id===savedAnalysis?.id ? '✓' : '版' }}</i><span><strong>{{ item.productName }} · {{ item.versionName }}</strong><small>{{ formatVersionTime(item.createdAt) }} · {{ item.requirementCount }} 项需求 · {{ item.testCaseCount }} 条用例</small><em><b :style="{width:`${item.questionCount ? Math.round(item.confirmedQuestionCount/item.questionCount*100) : 100}%`}"></b></em></span></button><p v-if="!analysisHistory.length">导入第一份 PRD 后会形成版本记录</p></div></div><div v-else><span>执行中心</span><b>/</b><strong>自动化执行记录</strong></div><label v-if="workspaceView==='version'" :class="['import',{disabled:analyzing}]"><input :disabled="analyzing" multiple type="file" accept=".pdf,.md,.markdown,.txt,application/pdf" @change="importPrd" />{{ analyzing ? 'AI 解析中…' : '＋ 导入需求材料' }}</label><button v-else class="back-version" @click="workspaceView='version'">返回版本中心</button></header>
       <div class="workspace">
         <template v-if="workspaceView==='version'">
         <section class="heading"><div><small><i></i>{{ savedAnalysis ? `真实解析 · ${savedAnalysis.provider}` : '示例模式 · 等待导入 PRD' }}</small><h1>{{ analysis.productName }} · {{ analysis.versionName }}</h1><p>{{ analysis.overview }}</p></div><div><button>分享评审</button><button class="primary" @click="activeTab='cases';toast('已切换到当前测试用例')">查看测试建议</button></div></section>

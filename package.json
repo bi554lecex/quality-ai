@@ -20,6 +20,7 @@
   "dependencies": {
     "drizzle-orm": "0.45.2",
     "jsonrepair": "^3.15.0",
+    "pdfjs-dist": "^6.2.108",
     "playwright": "^1.62.1",
     "vue": "3.5.22",
     "zod": "4.1.12"

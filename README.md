@@ -61,7 +61,7 @@ cp config/projects.example.json config/projects.local.json
 
 - Vue 3 + TypeScript + Vite
 - 公司 coding 网关 OpenAI Responses 模型适配层
-- Markdown/TXT PRD 与接口技术文档的多文件联合解析
+- PDF、Markdown、TXT PRD 与接口技术文档的多文件联合解析；文本型 PDF 服务端提取正文，扫描件会提示先进行 OCR
 - 基于 Node.js 内置 SQLite 的本地持久化
 - 0825 版本两个真实需求的解析验证
 - 需求概览、页面状态、待确认问题、测试用例四段式流程
