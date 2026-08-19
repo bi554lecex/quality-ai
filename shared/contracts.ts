@@ -144,6 +144,14 @@ export interface ExecutionResult {
       iteration: number
       snapshotId: string
       decision: AgentDecision
+      observation?: {
+        url: string
+        title: string
+        elementCount: number
+        elements: Array<{ ref: string; role: string; name: string }>
+        dialogs: string[]
+        messages: string[]
+      }
       result?: ToolResult
       projectContext?: unknown
     }>

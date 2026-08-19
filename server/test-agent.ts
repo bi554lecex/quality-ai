@@ -14,6 +14,14 @@ export interface AgentTrajectoryItem {
   iteration: number
   snapshotId: string
   decision: AgentDecision
+  observation?: {
+    url: string
+    title: string
+    elementCount: number
+    elements: Array<{ ref: string; role: string; name: string }>
+    dialogs: string[]
+    messages: string[]
+  }
   result?: ToolResult
   projectContext?: unknown
 }
@@ -45,6 +53,17 @@ interface TestAgentOptions {
 
 function isAssertionAction(action: AgentDecision & { type: 'action' }) {
   return 'assertionId' in action.action ? action.action.assertionId : undefined
+}
+
+function summarizeSnapshot(snapshot: PageSnapshot): NonNullable<AgentTrajectoryItem['observation']> {
+  return {
+    url: snapshot.url,
+    title: snapshot.title,
+    elementCount: snapshot.stats.discoveredElements,
+    elements: snapshot.elements.slice(0, 12).map(element => ({ ref: element.ref, role: element.role, name: element.name })),
+    dialogs: snapshot.dialogs.map(dialog => dialog.title),
+    messages: snapshot.messages.map(message => message.text).slice(0, 8),
+  }
 }
 
 export class TestAgent {
@@ -93,11 +112,11 @@ export class TestAgent {
       }
 
       if (decision.type === 'finish') {
-        trajectory.push({ iteration, snapshotId: snapshot.snapshotId, decision })
+        trajectory.push({ iteration, snapshotId: snapshot.snapshotId, decision, observation: summarizeSnapshot(snapshot) })
         return this.result('passed', decision.summary, state, trajectory, screenshots)
       }
       if (decision.type === 'blocked') {
-        trajectory.push({ iteration, snapshotId: snapshot.snapshotId, decision })
+        trajectory.push({ iteration, snapshotId: snapshot.snapshotId, decision, observation: summarizeSnapshot(snapshot) })
         return this.result('blocked', decision.reason, state, trajectory, screenshots)
       }
 
@@ -113,7 +132,7 @@ export class TestAgent {
         }
         state.projectContextRequests += 1
         projectContexts.push(projectContext)
-        trajectory.push({ iteration, snapshotId: snapshot.snapshotId, decision, projectContext })
+        trajectory.push({ iteration, snapshotId: snapshot.snapshotId, decision, observation: summarizeSnapshot(snapshot), projectContext })
         continue
       }
 
@@ -124,7 +143,7 @@ export class TestAgent {
       const assertionId = isAssertionAction(decision)
       if (result.ok && assertionId) state.passedAssertions.add(assertionId)
       if (result.screenshotPath) screenshots.push(result.screenshotPath)
-      trajectory.push({ iteration, snapshotId: snapshot.snapshotId, decision, result })
+      trajectory.push({ iteration, snapshotId: snapshot.snapshotId, decision, observation: summarizeSnapshot(snapshot), result })
       if (!result.ok) return this.result('failed', result.message, state, trajectory, screenshots)
       snapshot = await this.observer.observe(page)
     }

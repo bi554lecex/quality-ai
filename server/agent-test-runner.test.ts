@@ -58,6 +58,8 @@ test('runs a browser Agent with project context, DOM re-observation and required
   assert.equal(result.steps.length, 3)
   assert.equal(result.agent?.trajectory.length, 5)
   assert.deepEqual(result.agent?.passedAssertions, ['saved'])
+  assert.equal(result.agent?.trajectory[0].observation?.title, '学生管理')
+  assert.ok(result.agent?.trajectory[0].observation?.elements.some(element => element.name === '学生姓名'))
   assert.ok(result.tracePath)
   await stat(result.tracePath)
 })

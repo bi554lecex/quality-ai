@@ -55,6 +55,9 @@ test('runs an observe-decide-execute loop and requires declared assertions befor
     assert.equal(result.status, 'passed')
     assert.equal(result.executedSteps, 3)
     assert.deepEqual(result.passedAssertions, ['saved'])
+    assert.equal(result.trajectory[0].observation?.title, '')
+    assert.ok(result.trajectory[0].observation?.elements.some(element => element.name === '学生姓名'))
+    assert.equal(result.trajectory.at(-1)?.decision.type, 'finish')
     assert.equal(await page.locator('#name').inputValue(), '张三')
   } finally {
     await browser.close()
