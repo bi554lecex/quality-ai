@@ -6,6 +6,7 @@
       "root": "./targets/lvworkbench",
       "targetOrigins": ["http://localhost:5173"],
       "sourceRoots": [
+        "project/public-page/src",
         "project/workbench/src",
         "packages"
       ],

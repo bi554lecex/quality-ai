@@ -28,7 +28,7 @@ export class TestPolicy {
   constructor(private readonly goal: AgentTestGoal, options: TestPolicyOptions = {}) {
     this.maxSteps = options.maxSteps ?? 30
     this.maxDurationMs = options.maxDurationMs ?? 5 * 60_000
-    this.maxProjectContextRequests = options.maxProjectContextRequests ?? 2
+    this.maxProjectContextRequests = options.maxProjectContextRequests ?? 4
     this.maxRepeatedActions = options.maxRepeatedActions ?? 2
   }
 

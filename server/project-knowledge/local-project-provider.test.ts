@@ -55,6 +55,15 @@ test('resolves a dynamic route and its lazy component without executing target c
   })
 })
 
+test('resolves a source route behind a deployment base path', async testContext => {
+  const { directory, provider } = await createFixture()
+  testContext.after(() => rm(directory, { recursive: true, force: true }))
+  const route = await provider.resolveRoute({ url: 'http://localhost:5173/lvworkbench/students/42' })
+  assert.equal(route?.routePath, '/students/:id')
+  assert.equal(route?.componentFile, 'src/views/student/detail.vue')
+  assert.equal(route?.confidence, 'partial')
+})
+
 test('searches and inspects only allowlisted source roots', async testContext => {
   const { directory, provider } = await createFixture()
   testContext.after(() => rm(directory, { recursive: true, force: true }))
@@ -68,6 +77,17 @@ test('searches and inspects only allowlisted source roots', async testContext =>
     provider.inspectFiles({ paths: ['private/secret.ts'], reason: '尝试越界读取' }),
     /文件不在允许的源码目录/,
   )
+})
+
+test('finds a close Chinese source phrase when wording contains an extra qualifier', async testContext => {
+  const { directory, provider } = await createFixture()
+  testContext.after(() => rm(directory, { recursive: true, force: true }))
+  const projectRoot = join(directory, 'target-project')
+  await writeFile(join(projectRoot, 'src/views/student/detail.vue'), '<button>批量生成报告</button>')
+
+  const matches = await provider.searchSource({ query: '批量生成分析报告', scopes: ['page'] })
+  assert.equal(matches[0]?.path, 'src/views/student/detail.vue')
+  assert.match(matches[0]?.preview ?? '', /批量生成报告/)
 })
 
 test('rejects URLs outside configured target origins', async testContext => {

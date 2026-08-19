@@ -37,6 +37,7 @@ function matchRoute(routePath: string, pathname: string): RouteKnowledge['confid
       .replace(/:([A-Za-z0-9_]+)/g, '[^/]+')
       .replace(/\\\*+/g, '.*')
     if (new RegExp(`^${pattern}$`).test(normalizedPathname)) return 'pattern'
+    if (normalizedRoute !== '/' && new RegExp(`${pattern}$`).test(normalizedPathname)) return 'partial'
   }
   if (!routePath.startsWith('/') && normalizedPathname.endsWith(normalizeRoutePath(routePath))) return 'partial'
   return null
@@ -51,6 +52,16 @@ function scopeMatches(relativePath: string, scopes: SourceScope[] | undefined) {
     if (scope === 'component') return path.includes('/components/') || path.endsWith('.vue')
     return path.includes('/api/') || path.includes('/services/') || path.includes('/request/')
   })
+}
+
+function fuzzyChineseScore(query: string, candidate: string) {
+  const queryCharacters = query.match(/\p{Script=Han}/gu) ?? []
+  if (queryCharacters.length < 4) return 0
+  const candidateCharacters = candidate.match(/\p{Script=Han}/gu) ?? []
+  const queryPairs = new Set(queryCharacters.slice(0, -1).map((character, index) => character + queryCharacters[index + 1]))
+  const candidatePairs = new Set(candidateCharacters.slice(0, -1).map((character, index) => character + candidateCharacters[index + 1]))
+  const matchedPairs = [...queryPairs].filter(pair => candidatePairs.has(pair)).length
+  return matchedPairs >= 3 ? matchedPairs / queryPairs.size : 0
 }
 
 export class LocalProjectKnowledgeProvider implements ProjectKnowledgeProvider {
@@ -233,23 +244,33 @@ export class LocalProjectKnowledgeProvider implements ProjectKnowledgeProvider {
     const files = (await this.getIndexedFiles()).filter(file => scopeMatches(relative(root, file).replaceAll('\\', '/'), input.scopes))
     const lowerQuery = query.toLocaleLowerCase()
     const results: SourceMatch[] = []
+    const fuzzyResults: Array<SourceMatch & { score: number }> = []
     for (const file of files) {
       const fileStat = await stat(file)
       if (fileStat.size > maxSourceFileBytes) continue
       const lines = (await readFile(file, 'utf8')).split(/\r?\n/)
       for (let index = 0; index < lines.length; index += 1) {
         const column = lines[index].toLocaleLowerCase().indexOf(lowerQuery)
-        if (column === -1) continue
-        results.push({
+        const match = {
           path: relative(root, file).replaceAll('\\', '/'),
           line: index + 1,
           column: column + 1,
           preview: lines[index].trim().slice(0, 300),
-        })
-        if (results.length >= configuredLimit) return results
+        }
+        if (column !== -1) {
+          results.push(match)
+          if (results.length >= configuredLimit) return results
+          continue
+        }
+        const score = fuzzyChineseScore(query, lines[index])
+        if (score >= 0.5) fuzzyResults.push({ ...match, column: Math.max(lines[index].indexOf(query[0]), 0) + 1, score })
       }
     }
-    return results
+    if (results.length) return results
+    return fuzzyResults
+      .sort((left, right) => right.score - left.score || left.path.localeCompare(right.path) || left.line - right.line)
+      .slice(0, configuredLimit)
+      .map(match => ({ path: match.path, line: match.line, column: match.column, preview: match.preview }))
   }
 
   async inspectFiles(input: { paths: string[]; reason: string }): Promise<SourceContext> {
