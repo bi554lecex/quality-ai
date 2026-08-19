@@ -50,3 +50,29 @@ test('repairs an invalid first Responses output with schema feedback', async () 
   assert.deepEqual(await provider.decide(decisionInput()), { type: 'blocked', reason: '缺少可安全执行的信息' })
   assert.match(bodies[1], /未通过 AgentDecision Schema 校验/)
 })
+
+test('repairs an unsupported action name with the exact allowed action protocol', async () => {
+  const bodies: string[] = []
+  let call = 0
+  const provider = new ResponsesDecisionProvider({ ...modelOptions, fetchImpl: async (_input, init) => {
+    bodies.push(String(init?.body)); call += 1
+    return responseWithText(call === 1
+      ? `{"type":"action","snapshotId":"${decisionInput().snapshot.snapshotId}","action":{"action":"observe"},"reason":"重新观察"}`
+      : `{"type":"action","snapshotId":"${decisionInput().snapshot.snapshotId}","action":{"action":"waitFor","durationMs":1000},"reason":"等待页面稳定"}`)
+  } })
+
+  const decision = await provider.decide(decisionInput())
+  assert.equal(decision.type, 'action')
+  assert.equal(decision.type === 'action' ? decision.action.action : '', 'waitFor')
+  assert.match(bodies[1], /不支持的动作/)
+  assert.match(bodies[1], /waitFor/)
+  assert.match(bodies[1], /不要输出 observe/)
+})
+
+test('reports the unsupported action name after bounded repair attempts', async () => {
+  const provider = new ResponsesDecisionProvider({ ...modelOptions, fetchImpl: async () => responseWithText(
+    `{"type":"action","snapshotId":"${decisionInput().snapshot.snapshotId}","action":{"action":"reload"},"reason":"刷新页面"}`,
+  ) })
+
+  await assert.rejects(provider.decide(decisionInput()), /不支持的动作“reload”/)
+})

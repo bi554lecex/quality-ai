@@ -26,12 +26,44 @@ const decisionSystemPrompt = `你是 B 端网页自动化测试的单步决策�
 - finish
 - blocked
 
-action 示例：
+action.action 必须严格使用以下结构之一，不得创造 navigate、reload、observe、type、input、assert、sleep 等新动作名：
+{"action":"goto","path":"/相对路径"}
+{"action":"click","elementRef":"e3"}
+{"action":"fill","elementRef":"e3","value":"输入内容"}
+{"action":"selectOption","elementRef":"e3","value":"选项值"}
+{"action":"check","elementRef":"e3"}
+{"action":"uncheck","elementRef":"e3"}
+{"action":"expectVisible","elementRef":"e3","assertionId":"必要断言 ID"}
+{"action":"expectValue","elementRef":"e3","value":"预期值","assertionId":"必要断言 ID"}
+{"action":"expectText","text":"预期文字","assertionId":"必要断言 ID"}
+{"action":"waitFor","durationMs":1000}
+{"action":"screenshot","name":"证据名称"}
+
+页面尚未稳定时使用 waitFor；每次动作结束后系统会自动重新观察 DOM，不存在 observe 动作。
+
+完整 action 决策示例：
 {"type":"action","snapshotId":"当前 UUID","action":{"action":"click","elementRef":"e3"},"reason":"点击当前弹窗的保存按钮"}
 源码请求示例：
 {"type":"need_project_context","request":{"operation":"search_source","query":"编辑学生","scopes":["page","component"]},"reason":"DOM 中存在多个同名操作，需确认业务组件"}
 完成示例：
 {"type":"finish","summary":"所有必要操作和断言已完成"}`
+
+const allowedActionNames = [
+  'goto', 'click', 'fill', 'selectOption', 'check', 'uncheck',
+  'expectVisible', 'expectValue', 'expectText', 'waitFor', 'screenshot',
+] as const
+
+function decisionValidationError(candidate: unknown, error: unknown) {
+  const actionName = candidate && typeof candidate === 'object'
+    && 'action' in candidate && candidate.action && typeof candidate.action === 'object'
+    && 'action' in candidate.action && typeof candidate.action.action === 'string'
+    ? candidate.action.action
+    : undefined
+  if (actionName && !allowedActionNames.some(name => name === actionName)) {
+    return `模型返回了不支持的动作“${actionName}”；action.action 只能是：${allowedActionNames.join('、')}`
+  }
+  return error instanceof Error ? error.message : String(error)
+}
 
 function compactInput(input: AgentDecisionInput) {
   return {
@@ -59,16 +91,19 @@ export class ResponsesDecisionProvider implements AgentDecisionProvider {
       { role: 'user', content: `请决定下一步。当前输入：\n${JSON.stringify(compactInput(input))}` },
     ]
     let lastError: Error | undefined
-    for (let attempt = 0; attempt < 2; attempt += 1) {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
       try {
         const output = await this.client.generateText({ messages, maxOutputTokens: 1200 })
         try {
-          return agentDecisionSchema.parse(JSON.parse(jsonrepair(cleanJsonOutput(output))))
+          const candidate: unknown = JSON.parse(jsonrepair(cleanJsonOutput(output)))
+          return agentDecisionSchema.parse(candidate)
         } catch (error) {
-          lastError = error instanceof Error ? error : new Error(String(error))
-          if (attempt === 0) {
+          let candidate: unknown
+          try { candidate = JSON.parse(jsonrepair(cleanJsonOutput(output))) } catch { candidate = undefined }
+          lastError = new Error(decisionValidationError(candidate, error))
+          if (attempt < 2) {
             messages.push({ role: 'assistant', content: output.slice(0, 8_000) })
-            messages.push({ role: 'user', content: `上一个 JSON 未通过 AgentDecision Schema 校验：${lastError.message.slice(0, 2_000)}。请只修复结构和字段，仍然只输出一个 JSON 对象。` })
+            messages.push({ role: 'user', content: `上一个 JSON 未通过 AgentDecision Schema 校验：${lastError.message.slice(0, 2_000)}。action.action 必须从 ${allowedActionNames.join('、')} 中选择；页面未稳定请使用 waitFor，系统会自动重新观察，不要输出 observe 或 reload。请只修复结构和字段，仍然只输出一个 JSON 对象。` })
             continue
           }
         }
